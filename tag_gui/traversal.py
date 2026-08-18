@@ -55,7 +55,7 @@ class TraversalDialog(QDialog):
         self.path_label = QLabel()
         self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.shortcut_hint = QLabel(
-            "Keyboard: ↑/↓ select tag · Space toggle · Enter/→ next · ← previous"
+            "Keyboard: ↑/↓ select tag · Space toggle · A all · Enter/→ next · ← previous"
         )
         self.shortcut_hint.setStyleSheet("QLabel { color: #667085; }")
 
@@ -140,6 +140,9 @@ class TraversalDialog(QDialog):
                 return True
             if key == Qt.Key.Key_Space:
                 self._toggle_current_choice()
+                return True
+            if key == Qt.Key.Key_A:
+                self._toggle_all_choices()
                 return True
             if key in {
                 Qt.Key.Key_Return,
@@ -255,6 +258,23 @@ class TraversalDialog(QDialog):
             else Qt.CheckState.Checked
         )
         self.choices.setFocus()
+
+    def _toggle_all_choices(self) -> None:
+        if not self.choices.isVisible() or not self.choices.count():
+            return
+        all_checked = all(
+            self.choices.item(row).checkState() == Qt.CheckState.Checked
+            for row in range(self.choices.count())
+        )
+        state = (
+            Qt.CheckState.Unchecked if all_checked else Qt.CheckState.Checked
+        )
+        self._populating_choices = True
+        for row in range(self.choices.count()):
+            self.choices.item(row).setCheckState(state)
+        self._populating_choices = False
+        self.choices.setFocus()
+        self._update_result_preview()
 
     def _advance_from_keyboard(self) -> None:
         if self.apply_button.isEnabled():

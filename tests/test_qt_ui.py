@@ -211,6 +211,37 @@ def test_traversal_keyboard_navigation_selects_toggles_and_moves(qtbot, tmp_path
     assert dialog.session.current_index == 1
 
 
+def test_traversal_a_shortcut_toggles_all_options(qtbot, tmp_path: Path) -> None:
+    image_path = tmp_path / "sample.png"
+    tag_path = tmp_path / "sample.txt"
+    create_png(image_path)
+    tag_path.write_bytes(b"cat\n")
+    entry = ImageEntry(image_path, tag_path, ["cat"], b"cat\n")
+    dialog = TraversalDialog(
+        entries=[entry],
+        operation=TagOperation.ADD,
+        requested_tags=["dog", "bird"],
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    assert [
+        dialog.choices.item(row).checkState()
+        for row in range(dialog.choices.count())
+    ] == [Qt.CheckState.Unchecked, Qt.CheckState.Unchecked]
+    qtbot.keyClick(dialog.choices, Qt.Key.Key_A)
+    assert all(
+        dialog.choices.item(row).checkState() == Qt.CheckState.Checked
+        for row in range(dialog.choices.count())
+    )
+    qtbot.keyClick(dialog.choices, Qt.Key.Key_A)
+    assert all(
+        dialog.choices.item(row).checkState() == Qt.CheckState.Unchecked
+        for row in range(dialog.choices.count())
+    )
+
+
 def test_traversal_temporary_extra_tags_clear_on_image_switch(qtbot, tmp_path: Path) -> None:
     entries: list[ImageEntry] = []
     for name in ["first", "second"]:
