@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
+from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QGuiApplication, QImage
+
+from tag_gui.domain import ImageEntry, TagOperation
+from tag_gui.main_window import MainWindow
+from tag_gui.preview import PreviewLoader
+from tag_gui.traversal import TraversalDialog
+
+
+def create_png(path: Path, color: str = "#2f6fed") -> None:
+    image = QImage(32, 24, QImage.Format.Format_RGB32)
+    image.fill(QColor(color))
+    assert image.save(str(path), "PNG")
+
+
+def test_main_window_loads_folder_and_edits_current_tags(qtbot, tmp_path: Path) -> None:
+    create_png(tmp_path / "sample.png")
+    (tmp_path / "sample.txt").write_text("dog, cat\n", encoding="utf-8")
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window._load_directory(tmp_path, show_issues=False)
+
+    assert window.catalog.rowCount() == 1
+    assert window.image_list.currentIndex().row() == 0
+    assert [window.tag_list.item(i).text() for i in range(window.tag_list.count())] == [
+        "dog",
+        "cat",
+    ]
+
+    window.tag_input.setText("bird")
+    window._add_current_tags()
+    assert (tmp_path / "sample.txt").read_text(encoding="utf-8") == (
+        "bird, cat, dog\n"
+    )
+
+
+def test_navigation_actions_stop_at_boundaries(qtbot, tmp_path: Path) -> None:
+    create_png(tmp_path / "a.png")
+    create_png(tmp_path / "b.png")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+
+    assert not window.previous_action.isEnabled()
+    assert window.next_action.isEnabled()
+    window.next_action.trigger()
+    assert window.image_list.currentIndex().row() == 1
+    assert not window.next_action.isEnabled()
+    assert window.previous_action.isEnabled()
+
+
+def test_toolbar_tag_search_cycles_and_supports_wildcards(qtbot, tmp_path: Path) -> None:
+    for name, tags in {
+        "a.png": "cat\n",
+        "b.png": "dog\n",
+        "c.png": "cat, night_scene\n",
+    }.items():
+        create_png(tmp_path / name)
+        (tmp_path / f"{Path(name).stem}.txt").write_text(tags, encoding="utf-8")
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    window.show()
+    qtbot.waitExposed(window)
+
+    window.search_input.setText("cat")
+    qtbot.keyClick(window.search_input, Qt.Key.Key_Return)
+    assert window.image_list.currentIndex().row() == 2
+    assert [item.text() for item in window.tag_list.selectedItems()] == ["cat"]
+    qtbot.keyClick(window.search_input, Qt.Key.Key_Return)
+    assert window.image_list.currentIndex().row() == 0
+    assert [item.text() for item in window.tag_list.selectedItems()] == ["cat"]
+
+    window.search_input.setText("night*")
+    qtbot.keyClick(window.search_input, Qt.Key.Key_Return)
+    assert window.image_list.currentIndex().row() == 2
+    assert [item.text() for item in window.tag_list.selectedItems()] == [
+        "night_scene"
+    ]
+
+
+def test_empty_main_window_accepts_one_dropped_folder(qtbot, tmp_path: Path) -> None:
+    create_png(tmp_path / "sample.png")
+    mime_data = QMimeData()
+    mime_data.setUrls([QUrl.fromLocalFile(str(tmp_path))])
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    drag_event = QDragEnterEvent(
+        QPoint(20, 20),
+        Qt.DropAction.CopyAction,
+        mime_data,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.dragEnterEvent(drag_event)
+    assert drag_event.isAccepted()
+
+    drop_event = QDropEvent(
+        QPointF(20, 20),
+        Qt.DropAction.CopyAction,
+        mime_data,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.dropEvent(drop_event)
+    assert drop_event.isAccepted()
+    assert window.directory == tmp_path
+    assert window.catalog.rowCount() == 1
+
+    second_drag = QDragEnterEvent(
+        QPoint(20, 20),
+        Qt.DropAction.CopyAction,
+        mime_data,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.dragEnterEvent(second_drag)
+    assert not second_drag.isAccepted()
+
+
+def test_tag_context_copy_uses_comma_space_separator(qtbot, tmp_path: Path) -> None:
+    create_png(tmp_path / "sample.png")
+    (tmp_path / "sample.txt").write_text("dog, cat, bird\n", encoding="utf-8")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+
+    window.tag_list.item(0).setSelected(True)
+    window.tag_list.item(2).setSelected(True)
+    assert window.tag_list.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+
+    window._copy_selected_tags()
+
+    assert QGuiApplication.clipboard().text() == "dog, bird"
+
+
+def test_preview_loader_ignores_stale_generation(qtbot) -> None:
+    loader = PreviewLoader()
+    received: list[str] = []
+    loader.loaded.connect(lambda _image, error: received.append(error))
+    loader._generation = 2
+
+    loader._on_finished(1, QImage(), "stale")
+    loader._on_finished(2, QImage(), "current")
+
+    assert received == ["current"]
+
+
+def test_traversal_does_not_write_until_finish(qtbot, tmp_path: Path) -> None:
+    create_png(tmp_path / "sample.png")
+    tag_path = tmp_path / "sample.txt"
+    tag_path.write_bytes(b"cat\n")
+    entry = ImageEntry(
+        image_path=tmp_path / "sample.png",
+        tag_path=tag_path,
+        tags=["cat"],
+        source_bytes=b"cat\n",
+    )
+    dialog = TraversalDialog([entry], TagOperation.ADD, ["dog"])
+    qtbot.addWidget(dialog)
+
+    assert dialog.choices.item(0).checkState() == Qt.CheckState.Unchecked
+    dialog.choices.item(0).setCheckState(Qt.CheckState.Checked)
+    dialog._apply()
+    assert tag_path.read_bytes() == b"cat\n"
+    assert dialog.finish_button.isEnabled()
+
+    dialog._finish()
+    assert tag_path.read_bytes() == b"cat, dog\n"
+
+
+def test_traversal_keyboard_navigation_selects_toggles_and_moves(qtbot, tmp_path: Path) -> None:
+    first_image = tmp_path / "first.png"
+    second_image = tmp_path / "second.png"
+    create_png(first_image)
+    create_png(second_image)
+    first_tag = tmp_path / "first.txt"
+    second_tag = tmp_path / "second.txt"
+    first_tag.write_bytes(b"cat\n")
+    second_tag.write_bytes(b"dog\n")
+    entries = [
+        ImageEntry(first_image, first_tag, ["cat"], b"cat\n"),
+        ImageEntry(second_image, second_tag, ["dog"], b"dog\n"),
+    ]
+    dialog = TraversalDialog(entries, TagOperation.ADD, ["bird", "night"])
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    assert dialog.choices.currentRow() == 0
+    qtbot.keyClick(dialog.choices, Qt.Key.Key_Down)
+    assert dialog.choices.currentRow() == 1
+    qtbot.keyClick(dialog.choices, Qt.Key.Key_Up)
+    assert dialog.choices.currentRow() == 0
+    qtbot.keyClick(dialog.choices, Qt.Key.Key_Down)
+    qtbot.keyClick(dialog.choices, Qt.Key.Key_Space)
+    assert dialog.choices.item(1).checkState() == Qt.CheckState.Checked
+
+    qtbot.keyClick(dialog.choices, Qt.Key.Key_Return)
+    assert dialog.session.current_index == 1
+    qtbot.keyClick(dialog.choices, Qt.Key.Key_Left)
+    assert dialog.session.current_index == 0
+    qtbot.keyClick(dialog.choices, Qt.Key.Key_Right)
+    assert dialog.session.current_index == 1
+
+
+def test_traversal_temporary_extra_tags_clear_on_image_switch(qtbot, tmp_path: Path) -> None:
+    entries: list[ImageEntry] = []
+    for name in ["first", "second"]:
+        image_path = tmp_path / f"{name}.png"
+        tag_path = tmp_path / f"{name}.txt"
+        create_png(image_path)
+        tag_path.write_bytes(b"cat\n")
+        entries.append(ImageEntry(image_path, tag_path, ["cat"], b"cat\n"))
+
+    dialog = TraversalDialog(entries, TagOperation.ADD, ["base"])
+    qtbot.addWidget(dialog)
+    assert not dialog.temporary_input.isHidden()
+
+    dialog.temporary_input.setText("temporary, image_only")
+    assert dialog.apply_button.isEnabled()
+    assert dialog.result_tags.toPlainText() == "cat, image_only, temporary"
+    dialog._apply()
+
+    assert dialog.session.current_index == 1
+    assert dialog.temporary_input.text() == ""
+    assert dialog.session.staged[0] == ("cat", "image_only", "temporary")

@@ -1,0 +1,152 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from tag_gui.domain import (
+    ImageEntry,
+    TagOperation,
+    TraversalSession,
+    apply_tag_operation,
+    filter_traversal_entries,
+    normalize_tags,
+    parse_requested_tags,
+    parse_tags,
+    serialize_tags,
+    tag_matches_pattern,
+)
+
+
+def test_parse_and_serialize_tags() -> None:
+    assert parse_tags(" cat, dog, cat, , 猫 ") == ["cat", "dog", "猫"]
+    assert serialize_tags(["dog", "Cat", "cat", "dog"]) == "Cat, cat, dog\n"
+    assert serialize_tags([]) == "\n"
+
+
+def test_tag_search_pattern_supports_star_only() -> None:
+    assert tag_matches_pattern("cat", "cat")
+    assert tag_matches_pattern("cathedral", "cat*")
+    assert tag_matches_pattern("red_cat_large", "red*large")
+    assert tag_matches_pattern("anything", "*")
+    assert not tag_matches_pattern("Cat", "cat")
+    assert not tag_matches_pattern("cat1", "cat?")
+
+
+def test_requested_tags_must_not_be_empty() -> None:
+    try:
+        parse_requested_tags(" , ")
+    except ValueError as exc:
+        assert "at least one" in str(exc)
+    else:
+        raise AssertionError("Expected empty input to be rejected")
+
+
+def test_operations_are_case_sensitive_and_normalized() -> None:
+    current = ["dog", "Cat"]
+    assert apply_tag_operation(current, ["cat"], TagOperation.ADD) == [
+        "Cat",
+        "cat",
+        "dog",
+    ]
+    assert apply_tag_operation(current, ["Cat"], TagOperation.DELETE) == ["dog"]
+    assert apply_tag_operation(current, ["dog", "bird"], TagOperation.TOGGLE) == [
+        "Cat",
+        "bird",
+    ]
+    assert normalize_tags(["z", "a", "z"]) == ["a", "z"]
+
+
+def test_add_and_delete_traversals_filter_by_all_requested_tags(tmp_path: Path) -> None:
+    entries = [
+        _entry(tmp_path, "complete.jpg", ["cat", "dog"]),
+        _entry(tmp_path, "partial.jpg", ["cat"]),
+        _entry(tmp_path, "none.jpg", []),
+    ]
+
+    add_entries = filter_traversal_entries(
+        entries, TagOperation.ADD, ["cat", "dog"]
+    )
+    delete_entries = filter_traversal_entries(
+        entries, TagOperation.DELETE, ["cat", "dog"]
+    )
+
+    assert [entry.image_path.name for entry in add_entries] == [
+        "partial.jpg",
+        "none.jpg",
+    ]
+    assert [entry.image_path.name for entry in delete_entries] == ["complete.jpg"]
+
+
+def test_toggle_and_normalize_traversals_do_not_filter(tmp_path: Path) -> None:
+    entries = [_entry(tmp_path, "one.jpg", []), _entry(tmp_path, "two.jpg", ["cat"])]
+
+    assert filter_traversal_entries(entries, TagOperation.TOGGLE, ["cat"])
+    assert filter_traversal_entries(entries, TagOperation.NORMALIZE) == entries
+
+
+def test_traversal_session_uses_filtered_candidates(tmp_path: Path) -> None:
+    entries = [
+        _entry(tmp_path, "complete.jpg", ["cat", "dog"]),
+        _entry(tmp_path, "partial.jpg", ["cat"]),
+    ]
+
+    session = TraversalSession(entries, TagOperation.ADD, ["cat", "dog"])
+
+    assert [item.image_path.name for item in session.items] == ["partial.jpg"]
+
+
+def test_add_and_delete_start_with_no_selected_tags(tmp_path: Path) -> None:
+    add_session = TraversalSession(
+        [_entry(tmp_path, "add.jpg", ["cat"])],
+        TagOperation.ADD,
+        ["cat", "dog"],
+    )
+    delete_session = TraversalSession(
+        [_entry(tmp_path, "delete.jpg", ["cat", "dog"])],
+        TagOperation.DELETE,
+        ["cat", "dog"],
+    )
+    toggle_session = TraversalSession(
+        [_entry(tmp_path, "toggle.jpg", ["cat"])],
+        TagOperation.TOGGLE,
+        ["cat", "dog"],
+    )
+
+    assert add_session.selected_for() == []
+    assert delete_session.selected_for() == []
+    assert toggle_session.selected_for() == ["cat", "dog"]
+
+
+def test_temporary_extra_tags_use_the_session_operation(tmp_path: Path) -> None:
+    add_session = TraversalSession(
+        [_entry(tmp_path, "add-extra.jpg", ["cat"])],
+        TagOperation.ADD,
+        ["base"],
+    )
+    delete_session = TraversalSession(
+        [_entry(tmp_path, "delete-extra.jpg", ["cat", "dog"])],
+        TagOperation.DELETE,
+        ["cat"],
+    )
+
+    assert add_session.apply_current([], ["temporary"]) == ["cat", "temporary"]
+    assert delete_session.apply_current([], ["dog"]) == ["cat"]
+
+
+def _entry(tmp_path: Path, name: str, tags: list[str]) -> ImageEntry:
+    image_path = tmp_path / name
+    tag_path = tmp_path / f"{Path(name).stem}.txt"
+    source = (", ".join(tags) + "\n").encode()
+    return ImageEntry(image_path, tag_path, tags, source)
+
+
+def test_traversal_revisiting_replaces_staged_toggle(tmp_path: Path) -> None:
+    entries = [_entry(tmp_path, "a.jpg", ["cat"]), _entry(tmp_path, "b.jpg", [])]
+    session = TraversalSession(entries, TagOperation.TOGGLE, ["cat", "dog"])
+
+    assert session.apply_current(["cat", "dog"]) == ["dog"]
+    assert session.move_next()
+    session.skip_current()
+    assert session.move_back()
+    assert session.apply_current(["dog"]) == ["cat", "dog"]
+
+    assert session.staged_changes()[0][1] == ["cat", "dog"]
