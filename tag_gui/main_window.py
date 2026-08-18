@@ -374,22 +374,47 @@ class MainWindow(QMainWindow):
             return
 
         current_row = self.image_list.currentIndex().row()
-        for offset in range(1, count + 1):
-            row = (current_row + offset) % count
-            entry = self.catalog.entry(row)
-            matched_tag = (
-                next(
-                    (
-                        tag
-                        for tag in entry.tags
-                        if tag_matches_pattern(tag, pattern)
-                    ),
-                    None,
-                )
-                if entry is not None
-                else None
+        current_entry = self.catalog.entry(current_row)
+        current_tag_row = self.tag_list.currentRow()
+        selected_tag = self.tag_list.currentItem()
+        continue_in_current = (
+            current_entry is not None
+            and 0 <= current_tag_row < len(current_entry.tags)
+            and selected_tag is not None
+            and selected_tag.text() == current_entry.tags[current_tag_row]
+            and tag_matches_pattern(selected_tag.text(), pattern)
+        )
+
+        candidates: list[tuple[int, int]] = []
+
+        def append_rows(offsets: range) -> None:
+            for offset in offsets:
+                row = (current_row + offset) % count
+                entry = self.catalog.entry(row)
+                if entry is not None:
+                    candidates.extend(
+                        (row, tag_row) for tag_row in range(len(entry.tags))
+                    )
+
+        if continue_in_current:
+            candidates.extend(
+                (current_row, tag_row)
+                for tag_row in range(current_tag_row + 1, len(current_entry.tags))
             )
-            if entry is not None and matched_tag is not None:
+            append_rows(range(1, count))
+            candidates.extend(
+                (current_row, tag_row)
+                for tag_row in range(0, current_tag_row + 1)
+            )
+        else:
+            append_rows(range(1, count + 1))
+
+        for row, tag_row in candidates:
+            entry = self.catalog.entry(row)
+            if entry is None:
+                continue
+            matched_tag = entry.tags[tag_row]
+            if tag_matches_pattern(matched_tag, pattern):
                 self._select_row(row)
                 self._select_current_tag(matched_tag)
                 self.statusBar().showMessage(

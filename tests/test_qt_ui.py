@@ -85,6 +85,37 @@ def test_toolbar_tag_search_cycles_and_supports_wildcards(qtbot, tmp_path: Path)
     ]
 
 
+def test_toolbar_tag_search_finds_remaining_matches_in_current_file(
+    qtbot, tmp_path: Path
+) -> None:
+    for name, tags in {
+        "a.png": "\n",
+        "b.png": "match_one, match_two\n",
+        "c.png": "match_three\n",
+    }.items():
+        create_png(tmp_path / name)
+        (tmp_path / f"{Path(name).stem}.txt").write_text(tags, encoding="utf-8")
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    window.show()
+    qtbot.waitExposed(window)
+
+    window.search_input.setText("match_*")
+    qtbot.keyClick(window.search_input, Qt.Key.Key_Return)
+    assert window.image_list.currentIndex().row() == 1
+    assert [item.text() for item in window.tag_list.selectedItems()] == ["match_one"]
+
+    qtbot.keyClick(window.search_input, Qt.Key.Key_Return)
+    assert window.image_list.currentIndex().row() == 1
+    assert [item.text() for item in window.tag_list.selectedItems()] == ["match_two"]
+
+    qtbot.keyClick(window.search_input, Qt.Key.Key_Return)
+    assert window.image_list.currentIndex().row() == 2
+    assert [item.text() for item in window.tag_list.selectedItems()] == ["match_three"]
+
+
 def test_empty_main_window_accepts_one_dropped_folder(qtbot, tmp_path: Path) -> None:
     create_png(tmp_path / "sample.png")
     mime_data = QMimeData()
