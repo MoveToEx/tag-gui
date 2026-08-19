@@ -663,7 +663,7 @@ class MainWindow(QMainWindow):
         if not entries:
             message = {
                 TagOperation.ADD: "Every editable image already has all specified tags.",
-                TagOperation.DELETE: "No editable image has all specified tags.",
+                TagOperation.DELETE: "No editable image has any specified tag.",
                 TagOperation.TOGGLE: "No editable images are available for toggling.",
                 TagOperation.NORMALIZE: "No editable images are available for normalization.",
             }[operation]

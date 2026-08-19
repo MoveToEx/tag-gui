@@ -94,8 +94,8 @@ def should_traverse_entry(
     """Return whether an entry should be shown in a folder traversal.
 
     Add skips entries that already contain every requested tag. Delete skips
-    entries that do not contain every requested tag, so both workflows avoid
-    presenting partial/no-op candidates by default.
+    entries that contain none of the requested tags, so both workflows avoid
+    presenting no-op candidates by default.
     """
     if operation not in {TagOperation.ADD, TagOperation.DELETE}:
         return True
@@ -103,7 +103,7 @@ def should_traverse_entry(
     requested = set(requested_tags)
     if operation == TagOperation.ADD:
         return not requested.issubset(current)
-    return requested.issubset(current)
+    return not current.isdisjoint(requested)
 
 
 def filter_traversal_entries(

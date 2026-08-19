@@ -55,7 +55,7 @@ def test_operations_are_case_sensitive_and_normalized() -> None:
     assert normalize_tags(["z", "a", "z"]) == ["a", "z"]
 
 
-def test_add_and_delete_traversals_filter_by_all_requested_tags(tmp_path: Path) -> None:
+def test_add_and_delete_traversals_filter_requested_tags(tmp_path: Path) -> None:
     entries = [
         _entry(tmp_path, "complete.jpg", ["cat", "dog"]),
         _entry(tmp_path, "partial.jpg", ["cat"]),
@@ -73,7 +73,29 @@ def test_add_and_delete_traversals_filter_by_all_requested_tags(tmp_path: Path) 
         "partial.jpg",
         "none.jpg",
     ]
-    assert [entry.image_path.name for entry in delete_entries] == ["complete.jpg"]
+    assert [entry.image_path.name for entry in delete_entries] == [
+        "complete.jpg",
+        "partial.jpg",
+    ]
+
+
+def test_delete_traversal_session_includes_partial_matches(tmp_path: Path) -> None:
+    session = TraversalSession(
+        [
+            _entry(tmp_path, "complete.jpg", ["cat", "dog"]),
+            _entry(tmp_path, "partial.jpg", ["cat"]),
+            _entry(tmp_path, "none.jpg", ["bird"]),
+        ],
+        TagOperation.DELETE,
+        ["cat", "dog"],
+    )
+
+    assert [item.image_path.name for item in session.items] == [
+        "complete.jpg",
+        "partial.jpg",
+    ]
+    assert session.eligible_for(0) == ["cat", "dog"]
+    assert session.eligible_for(1) == ["cat"]
 
 
 def test_toggle_and_normalize_traversals_do_not_filter(tmp_path: Path) -> None:
