@@ -54,6 +54,55 @@ def test_navigation_actions_stop_at_boundaries(qtbot, tmp_path: Path) -> None:
     assert window.previous_action.isEnabled()
 
 
+def test_close_folder_empties_program_state(qtbot, tmp_path: Path) -> None:
+    create_png(tmp_path / "sample.png")
+    (tmp_path / "sample.txt").write_text("dog, cat\n", encoding="utf-8")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    window.tag_input.setText("bird")
+    window.search_input.setText("cat")
+
+    assert window.close_folder_action.isEnabled()
+    window.close_folder_action.trigger()
+
+    assert window.directory is None
+    assert window.catalog.rowCount() == 0
+    assert not window.image_list.currentIndex().isValid()
+    assert window.tag_list.count() == 0
+    assert window.tag_input.text() == ""
+    assert window.search_input.text() == ""
+    assert window.image_view._pixmap is None
+    assert window.image_view._label.text() == "Open a folder to begin"
+    assert window.statusBar().currentMessage() == ""
+    assert not window.close_folder_action.isEnabled()
+    assert not window.rescan_action.isEnabled()
+    assert not window.search_input.isEnabled()
+    assert not window.tag_input.isEnabled()
+
+
+def test_close_folder_allows_another_folder_drop(qtbot, tmp_path: Path) -> None:
+    create_png(tmp_path / "sample.png")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    window.close_folder()
+
+    mime_data = QMimeData()
+    mime_data.setUrls([QUrl.fromLocalFile(str(tmp_path))])
+    drag_event = QDragEnterEvent(
+        QPoint(20, 20),
+        Qt.DropAction.CopyAction,
+        mime_data,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    window.dragEnterEvent(drag_event)
+
+    assert drag_event.isAccepted()
+
+
 def test_toolbar_tag_search_cycles_and_supports_wildcards(qtbot, tmp_path: Path) -> None:
     for name, tags in {
         "a.png": "cat\n",

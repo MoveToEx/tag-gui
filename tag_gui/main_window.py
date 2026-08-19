@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QItemSelectionModel, QSettings, Qt
+from PySide6.QtCore import QItemSelectionModel, QModelIndex, QSettings, Qt
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -131,6 +131,10 @@ class MainWindow(QMainWindow):
         self.open_action.setShortcut(QKeySequence.StandardKey.Open)
         self.open_action.triggered.connect(self.open_folder)
 
+        self.close_folder_action = QAction("Close Folder", self)
+        self.close_folder_action.setShortcut(QKeySequence.StandardKey.Close)
+        self.close_folder_action.triggered.connect(self.close_folder)
+
         self.rescan_action = QAction("Rescan", self)
         self.rescan_action.setShortcut(QKeySequence("F5"))
         self.rescan_action.triggered.connect(self.rescan)
@@ -196,6 +200,7 @@ class MainWindow(QMainWindow):
     def _create_menus_and_toolbar(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
         file_menu.addAction(self.open_action)
+        file_menu.addAction(self.close_folder_action)
         file_menu.addAction(self.rescan_action)
         file_menu.addSeparator()
         file_menu.addAction(self.exit_action)
@@ -252,6 +257,22 @@ class MainWindow(QMainWindow):
         )
         if selected:
             self._load_directory(Path(selected), show_issues=True)
+
+    def close_folder(self) -> None:
+        if self.directory is None:
+            return
+
+        self.directory = None
+        self.preview_loader.clear()
+        self.image_list.clearSelection()
+        self.image_list.setCurrentIndex(QModelIndex())
+        self.catalog.set_entries([])
+        self.image_view.clear_image("Open a folder to begin")
+        self.tag_list.clear()
+        self.tag_input.clear()
+        self.search_input.clear()
+        self.statusBar().clearMessage()
+        self._update_action_states()
 
     def _dropped_directory(self, event) -> Path | None:
         if self.directory is not None or not event.mimeData().hasUrls():
@@ -608,7 +629,9 @@ class MainWindow(QMainWindow):
         current = self.catalog.entry(row)
         editable = current is not None and current.editable
 
-        self.rescan_action.setEnabled(self.directory is not None)
+        has_directory = self.directory is not None
+        self.close_folder_action.setEnabled(has_directory)
+        self.rescan_action.setEnabled(has_directory)
         self.search_input.setEnabled(count > 0)
         self.focus_search_action.setEnabled(count > 0)
         self.first_action.setEnabled(has_current and row > 0)
