@@ -124,9 +124,7 @@ class MainWindow(QMainWindow):
         self._update_action_states()
 
     def _create_actions(self) -> None:
-        style = self.style()
         self.open_action = QAction(
-            style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
             "Open Folder...",
             self,
         )
@@ -147,10 +145,10 @@ class MainWindow(QMainWindow):
 
         self.first_action = QAction("First", self)
         self.previous_action = QAction(
-            style.standardIcon(QStyle.StandardPixmap.SP_ArrowBack), "Previous", self
+            "Previous", self
         )
         self.next_action = QAction(
-            style.standardIcon(QStyle.StandardPixmap.SP_ArrowForward), "Next", self
+            "Next", self
         )
         self.last_action = QAction("Last", self)
         self.first_action.setShortcut(QKeySequence("Ctrl+Home"))
@@ -248,7 +246,7 @@ class MainWindow(QMainWindow):
         }
 
     def open_folder(self) -> None:
-        start = self.settings.value("last_directory", "", type=str)
+        start = str(self.settings.value("last_directory", "", type=str))
         selected = QFileDialog.getExistingDirectory(
             self, "Open Image Folder", start
         )
