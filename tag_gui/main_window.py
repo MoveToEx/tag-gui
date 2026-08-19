@@ -576,6 +576,21 @@ class MainWindow(QMainWindow):
         QGuiApplication.clipboard().setText(selected)
         self.statusBar().showMessage("Copied selected tags.", 3000)
 
+    def _confirm_delete_selected_tags(self) -> None:
+        selected_tags = [item.text() for item in self.tag_list.selectedItems()]
+        if not selected_tags:
+            return
+        tags = ", ".join(selected_tags)
+        answer = QMessageBox.question(
+            self,
+            "Delete Selected Tags?",
+            f"Delete these tags from the current image?\n\n{tags}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._apply_current_operation(TagOperation.DELETE, selected_tags)
+
     def _show_tag_context_menu(self, position) -> None:
         item = self.tag_list.itemAt(position)
         if item is not None and not item.isSelected():
@@ -585,8 +600,12 @@ class MainWindow(QMainWindow):
         copy_action = QAction("Copy Selected Tags", self)
         copy_action.setEnabled(bool(self._selected_tag_text()))
         copy_action.triggered.connect(self._copy_selected_tags)
+        delete_action = QAction("Delete Selected Tags", self)
+        delete_action.setEnabled(bool(self.tag_list.selectedItems()))
+        delete_action.triggered.connect(self._confirm_delete_selected_tags)
         menu = QMenu(self)
         menu.addAction(copy_action)
+        menu.addAction(delete_action)
         menu.exec(self.tag_list.viewport().mapToGlobal(position))
 
     def _apply_current_operation(
