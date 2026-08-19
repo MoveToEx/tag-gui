@@ -150,3 +150,30 @@ def test_traversal_revisiting_replaces_staged_toggle(tmp_path: Path) -> None:
     assert session.apply_current(["dog"]) == ["cat", "dog"]
 
     assert session.staged_changes()[0][1] == ["cat", "dog"]
+
+
+def test_traversal_all_available_changes_uses_every_option(tmp_path: Path) -> None:
+    add_session = TraversalSession(
+        [_entry(tmp_path, "add.jpg", ["cat"])],
+        TagOperation.ADD,
+        ["cat", "dog", "bird"],
+    )
+    delete_session = TraversalSession(
+        [_entry(tmp_path, "delete.jpg", ["cat", "dog", "bird"])],
+        TagOperation.DELETE,
+        ["cat", "dog"],
+    )
+    toggle_session = TraversalSession(
+        [_entry(tmp_path, "toggle.jpg", ["cat"])],
+        TagOperation.TOGGLE,
+        ["cat", "dog"],
+    )
+    normalize_session = TraversalSession(
+        [_entry(tmp_path, "normalize.jpg", ["z", "a", "z"])],
+        TagOperation.NORMALIZE,
+    )
+
+    assert add_session.all_available_changes()[0][1] == ["bird", "cat", "dog"]
+    assert delete_session.all_available_changes()[0][1] == ["bird"]
+    assert toggle_session.all_available_changes()[0][1] == ["dog"]
+    assert normalize_session.all_available_changes()[0][1] == ["a", "z"]

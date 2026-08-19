@@ -279,3 +279,11 @@ class TraversalSession:
             (self.items[index], list(tags))
             for index, tags in sorted(self.staged.items())
         ]
+
+    def all_available_changes(self) -> list[tuple[TraversalItem, list[str]]]:
+        changes: list[tuple[TraversalItem, list[str]]] = []
+        for index, item in enumerate(self.items):
+            result = self.result_for(self.eligible_for(index), index=index)
+            if tuple(result) != item.original_tags:
+                changes.append((item, result))
+        return changes

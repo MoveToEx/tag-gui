@@ -256,6 +256,56 @@ def test_traversal_does_not_write_until_finish(qtbot, tmp_path: Path) -> None:
     assert tag_path.read_bytes() == b"cat, dog\n"
 
 
+def test_traversal_apply_all_requires_confirmation_and_commits_all_options(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    entries: list[ImageEntry] = []
+    for name, tags in {"first": "cat\n", "second": "bird\n"}.items():
+        image_path = tmp_path / f"{name}.png"
+        tag_path = tmp_path / f"{name}.txt"
+        create_png(image_path)
+        tag_path.write_text(tags, encoding="utf-8")
+        entries.append(
+            ImageEntry(
+                image_path=image_path,
+                tag_path=tag_path,
+                tags=tags.strip().split(", "),
+                source_bytes=tags.encode(),
+            )
+        )
+
+    dialog = TraversalDialog(entries, TagOperation.ADD, ["dog", "night"])
+    qtbot.addWidget(dialog)
+    confirmations: list[str] = []
+
+    def cancel(_parent, _title, message, *_args):
+        confirmations.append(message)
+        return QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(QMessageBox, "question", cancel)
+    dialog.apply_all_button.click()
+
+    assert (tmp_path / "first.txt").read_text(encoding="utf-8") == "cat\n"
+    assert (tmp_path / "second.txt").read_text(encoding="utf-8") == "bird\n"
+    assert "2 sidecar file(s) will change" in confirmations[0]
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: QMessageBox.StandardButton.Yes,
+    )
+    dialog.apply_all_button.click()
+
+    assert (tmp_path / "first.txt").read_text(encoding="utf-8") == (
+        "cat, dog, night\n"
+    )
+    assert (tmp_path / "second.txt").read_text(encoding="utf-8") == (
+        "bird, dog, night\n"
+    )
+    assert dialog.commit_result is not None
+    assert dialog.commit_result.complete
+
+
 def test_traversal_keyboard_navigation_selects_toggles_and_moves(qtbot, tmp_path: Path) -> None:
     first_image = tmp_path / "first.png"
     second_image = tmp_path / "second.png"

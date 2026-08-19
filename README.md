@@ -15,6 +15,8 @@ A PySide6 desktop application for editing comma-separated image tag sidecars.
 - Provides staged folder traversal workflows for adding, deleting, toggling,
   and normalizing tags. Add traversals skip images that already have every
   requested tag; Delete traversals skip images missing any requested tag.
+- Traversal windows can apply every available option to every candidate image
+  at once after confirmation, without reviewing images individually.
 - Add/Delete traversal windows accept temporary extra tags for the current
   image and clear that input whenever the displayed image changes.
 - Uses UTF-8 sidecars and atomic per-file writes.

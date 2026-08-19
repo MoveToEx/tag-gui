@@ -19,7 +19,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .domain import ImageEntry, TagOperation, TraversalSession, parse_tags
+from .domain import (
+    ImageEntry,
+    TagOperation,
+    TraversalItem,
+    TraversalSession,
+    parse_tags,
+)
 from .preview import ImageView, PreviewLoader
 from .storage import (
     BatchCommitResult,
@@ -105,16 +111,22 @@ class TraversalDialog(QDialog):
         self.back_button = QPushButton("Back")
         self.skip_button = QPushButton("Skip & Next")
         self.apply_button = QPushButton("Apply & Next")
+        self.apply_all_button = QPushButton("Apply All to All Images")
+        self.apply_all_button.setToolTip(
+            "Apply every available option to every image in this traversal"
+        )
         self.finish_button = QPushButton("Finish")
         self.stop_button = QPushButton("Stop")
         self.back_button.clicked.connect(self._back)
         self.skip_button.clicked.connect(self._skip)
         self.apply_button.clicked.connect(self._apply)
+        self.apply_all_button.clicked.connect(self._apply_all)
         self.finish_button.clicked.connect(self._finish)
         self.stop_button.clicked.connect(self.reject)
 
         button_layout = QHBoxLayout()
         button_layout.addWidget(self.stop_button)
+        button_layout.addWidget(self.apply_all_button)
         button_layout.addStretch(1)
         button_layout.addWidget(self.back_button)
         button_layout.addWidget(self.skip_button)
@@ -343,7 +355,37 @@ class TraversalDialog(QDialog):
     def _finish(self) -> None:
         if self.session.current_index not in self.session.reviewed:
             return
-        changes = self.session.staged_changes()
+        self._commit_changes(self.session.staged_changes())
+
+    def _apply_all(self) -> None:
+        changes = self.session.all_available_changes()
+        operation = {
+            TagOperation.ADD: "add all available tags to",
+            TagOperation.DELETE: "delete all available tags from",
+            TagOperation.TOGGLE: "toggle all available tags on",
+            TagOperation.NORMALIZE: "normalize tags for",
+        }[self.session.operation]
+        message = (
+            f"This will immediately {operation} all "
+            f"{len(self.session.items)} image(s) in this traversal.\n\n"
+            f"{len(changes)} sidecar file(s) will change."
+        )
+        if self.session.has_changes:
+            message += "\n\nAny manual selections already made will be ignored."
+        message += "\n\nContinue?"
+        answer = QMessageBox.question(
+            self,
+            "Apply All to All Images?",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._commit_changes(changes)
+
+    def _commit_changes(
+        self, changes: list[tuple[TraversalItem, list[str]]]
+    ) -> None:
         if not changes:
             self.commit_result = BatchCommitResult([], {})
             self._allow_close = True
