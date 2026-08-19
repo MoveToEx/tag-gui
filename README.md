@@ -11,7 +11,7 @@ A PySide6 desktop application for editing comma-separated image tag sidecars.
   missing stem sidecar automatically.
 - Displays an image list, scalable preview, and an inline tag editor.
 - Searches tags from the toolbar, including `*` wildcard matching, and cycles
-  through matching images with Enter.
+  forward through matches with Enter or backward with Shift+Enter.
 - Provides staged folder traversal workflows for adding, deleting, toggling,
   and normalizing tags. Add traversals skip images that already have every
   requested tag; Delete traversals skip images missing any requested tag.

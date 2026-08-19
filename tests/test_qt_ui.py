@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QGuiApplication, QImage
+from PySide6.QtWidgets import QMessageBox
 
 from tag_gui.domain import ImageEntry, TagOperation
 from tag_gui.main_window import MainWindow
@@ -165,6 +166,49 @@ def test_toolbar_tag_search_finds_remaining_matches_in_current_file(
     assert [item.text() for item in window.tag_list.selectedItems()] == ["match_three"]
 
 
+def test_toolbar_tag_search_moves_backwards_with_shift_enter(
+    qtbot, tmp_path: Path
+) -> None:
+    for name, tags in {
+        "a.png": "match_one\n",
+        "b.png": "match_two, match_three\n",
+        "c.png": "match_four\n",
+    }.items():
+        create_png(tmp_path / name)
+        (tmp_path / f"{Path(name).stem}.txt").write_text(tags, encoding="utf-8")
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    window.show()
+    qtbot.waitExposed(window)
+    window.search_input.setText("match_*")
+
+    qtbot.keyClick(
+        window.search_input,
+        Qt.Key.Key_Return,
+        Qt.KeyboardModifier.ShiftModifier,
+    )
+    assert window.image_list.currentIndex().row() == 2
+    assert [item.text() for item in window.tag_list.selectedItems()] == ["match_four"]
+
+    qtbot.keyClick(
+        window.search_input,
+        Qt.Key.Key_Return,
+        Qt.KeyboardModifier.ShiftModifier,
+    )
+    assert window.image_list.currentIndex().row() == 1
+    assert [item.text() for item in window.tag_list.selectedItems()] == ["match_three"]
+
+    qtbot.keyClick(
+        window.search_input,
+        Qt.Key.Key_Return,
+        Qt.KeyboardModifier.ShiftModifier,
+    )
+    assert window.image_list.currentIndex().row() == 1
+    assert [item.text() for item in window.tag_list.selectedItems()] == ["match_two"]
+
+
 def test_empty_main_window_accepts_one_dropped_folder(qtbot, tmp_path: Path) -> None:
     create_png(tmp_path / "sample.png")
     mime_data = QMimeData()
@@ -264,7 +308,7 @@ def test_traversal_apply_all_requires_confirmation_and_commits_all_options(
         image_path = tmp_path / f"{name}.png"
         tag_path = tmp_path / f"{name}.txt"
         create_png(image_path)
-        tag_path.write_text(tags, encoding="utf-8")
+        tag_path.write_bytes(tags.encode())
         entries.append(
             ImageEntry(
                 image_path=image_path,

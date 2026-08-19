@@ -3,7 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast, override
 
-from PySide6.QtCore import QItemSelectionModel, QModelIndex, QSettings, Qt
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelectionModel,
+    QModelIndex,
+    QObject,
+    QSettings,
+    Qt,
+)
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -12,6 +19,7 @@ from PySide6.QtGui import (
     QDropEvent,
     QGuiApplication,
     QImageReader,
+    QKeyEvent,
     QKeySequence,
 )
 from PySide6.QtWidgets import (
@@ -86,9 +94,10 @@ class MainWindow(QMainWindow):
         self.search_input.setMinimumWidth(180)
         self.search_input.setMaximumWidth(300)
         self.search_input.setToolTip(
-            "Search tags in the opened folder. Use * as a wildcard and press Enter for the next match."
+            "Search tags in the opened folder. Use * as a wildcard. "
+            "Press Enter for the next match or Shift+Enter for the previous match."
         )
-        self.search_input.returnPressed.connect(self._find_next_tag)
+        self.search_input.installEventFilter(self)
 
         add_button = QPushButton("Add")
         toggle_button = QPushButton("Toggle")
@@ -386,7 +395,21 @@ class MainWindow(QMainWindow):
         self.search_input.setFocus()
         self.search_input.selectAll()
 
-    def _find_next_tag(self) -> None:
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.search_input and event.type() == QEvent.Type.KeyPress:
+            key_event = cast(QKeyEvent, event)
+            if key_event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:
+                direction = (
+                    -1
+                    if key_event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                    else 1
+                )
+                self._find_tag(direction)
+                return True
+        return super().eventFilter(watched, event)
+
+    def _find_tag(self, direction: int = 1) -> None:
         pattern = self.search_input.text().strip()
         if not pattern:
             self.statusBar().showMessage("Enter a tag pattern to search for.", 4000)
@@ -416,22 +439,44 @@ class MainWindow(QMainWindow):
                 row = (current_row + offset) % count
                 entry = self.catalog.entry(row)
                 if entry is not None:
-                    candidates.extend(
-                        (row, tag_row) for tag_row in range(len(entry.tags))
+                    tag_rows = (
+                        range(len(entry.tags))
+                        if direction > 0
+                        else range(len(entry.tags) - 1, -1, -1)
                     )
+                    candidates.extend((row, tag_row) for tag_row in tag_rows)
 
         if continue_in_current:
-            candidates.extend(
-                (current_row, tag_row)
-                for tag_row in range(current_tag_row + 1, len(current_entry.tags))
-            )
-            append_rows(range(1, count))
-            candidates.extend(
-                (current_row, tag_row)
-                for tag_row in range(0, current_tag_row + 1)
-            )
+            if direction > 0:
+                candidates.extend(
+                    (current_row, tag_row)
+                    for tag_row in range(
+                        current_tag_row + 1, len(current_entry.tags)
+                    )
+                )
+                append_rows(range(1, count))
+                candidates.extend(
+                    (current_row, tag_row)
+                    for tag_row in range(0, current_tag_row + 1)
+                )
+            else:
+                candidates.extend(
+                    (current_row, tag_row)
+                    for tag_row in range(current_tag_row - 1, -1, -1)
+                )
+                append_rows(range(-1, -count, -1))
+                candidates.extend(
+                    (current_row, tag_row)
+                    for tag_row in range(
+                        len(current_entry.tags) - 1, current_tag_row - 1, -1
+                    )
+                )
         else:
-            append_rows(range(1, count + 1))
+            append_rows(
+                range(1, count + 1)
+                if direction > 0
+                else range(-1, -count - 1, -1)
+            )
 
         for row, tag_row in candidates:
             entry = self.catalog.entry(row)
