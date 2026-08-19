@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import override
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal
-from PySide6.QtGui import QImage, QImageReader, QPixmap
+from PySide6.QtGui import QImage, QImageReader, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QLabel, QScrollArea
 
 
@@ -18,6 +19,7 @@ class _PreviewWorker(QRunnable):
         self.path = path
         self.signals = _PreviewSignals()
 
+    @override
     def run(self) -> None:
         reader = QImageReader(str(self.path))
         reader.setAutoTransform(True)
@@ -101,7 +103,8 @@ class ImageView(QScrollArea):
         self._zoom = max(0.1, self._zoom / 1.25)
         self._update_pixmap()
 
-    def resizeEvent(self, event) -> None:
+    @override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         if self._fit_to_window:
             self._update_pixmap()

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import override
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QPersistentModelIndex,
+    Qt,
+)
 from PySide6.QtGui import QColor
 
 from .domain import ImageEntry
@@ -15,10 +21,18 @@ class ImageCatalogModel(QAbstractListModel):
         super().__init__(parent)
         self.entries: list[ImageEntry] = []
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+    @override
+    def rowCount(
+        self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()
+    ) -> int:
         return 0 if parent.isValid() else len(self.entries)
 
-    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
+    @override
+    def data(
+        self,
+        index: QModelIndex | QPersistentModelIndex,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ):
         if not index.isValid() or not 0 <= index.row() < len(self.entries):
             return None
         entry = self.entries[index.row()]

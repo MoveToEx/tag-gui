@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast, override
 
 from PySide6.QtCore import QItemSelectionModel, QModelIndex, QSettings, Qt
 from PySide6.QtGui import (
@@ -246,7 +247,8 @@ class MainWindow(QMainWindow):
 
     def _supported_extensions(self) -> set[str]:
         return {
-            "." + bytes(image_format).decode("ascii", errors="ignore").casefold()
+            "."
+            + bytes(image_format.data()).decode("ascii", errors="ignore").casefold()
             for image_format in QImageReader.supportedImageFormats()
         }
 
@@ -283,18 +285,21 @@ class MainWindow(QMainWindow):
         path = Path(urls[0].toLocalFile())
         return path if path.is_dir() else None
 
+    @override
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if self._dropped_directory(event) is not None:
             event.acceptProposedAction()
         else:
             event.ignore()
 
+    @override
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:
         if self._dropped_directory(event) is not None:
             event.acceptProposedAction()
         else:
             event.ignore()
 
+    @override
     def dropEvent(self, event: QDropEvent) -> None:
         directory = self._dropped_directory(event)
         if directory is None:
@@ -660,10 +665,11 @@ class MainWindow(QMainWindow):
         splitter_state = self.settings.value("splitter_state")
         if splitter_state:
             self.splitter.restoreState(splitter_state)
-        fit = self.settings.value("fit_to_window", True, type=bool)
+        fit = cast(bool, self.settings.value("fit_to_window", True, type=bool))
         self.fit_action.setChecked(fit)
         self.image_view.set_fit_to_window(fit)
 
+    @override
     def closeEvent(self, event: QCloseEvent) -> None:
         self.settings.setValue("main_geometry", self.saveGeometry())
         self.settings.setValue("splitter_state", self.splitter.saveState())

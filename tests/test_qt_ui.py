@@ -14,7 +14,7 @@ from tag_gui.traversal import TraversalDialog
 def create_png(path: Path, color: str = "#2f6fed") -> None:
     image = QImage(32, 24, QImage.Format.Format_RGB32)
     image.fill(QColor(color))
-    assert image.save(str(path), "PNG")
+    assert image.save(str(path))
 
 
 def test_main_window_loads_folder_and_edits_current_tags(qtbot, tmp_path: Path) -> None:

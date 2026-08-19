@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from typing import cast, override
+
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QCloseEvent, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -129,9 +131,10 @@ class TraversalDialog(QDialog):
         self._create_shortcuts()
         self._load_current()
 
-    def eventFilter(self, watched, event) -> bool:
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.choices and event.type() == QEvent.Type.KeyPress:
-            key = event.key()
+            key = cast(QKeyEvent, event).key()
             if key == Qt.Key.Key_Up:
                 self._move_tag_selection_up()
                 return True
@@ -386,12 +389,14 @@ class TraversalDialog(QDialog):
         )
         return answer == QMessageBox.StandardButton.Discard
 
+    @override
     def reject(self) -> None:
         if self._allow_close or self._confirm_discard():
             self._allow_close = True
             super().reject()
 
-    def closeEvent(self, event) -> None:
+    @override
+    def closeEvent(self, event: QCloseEvent) -> None:
         if self._allow_close or self._confirm_discard():
             self._allow_close = True
             event.accept()
