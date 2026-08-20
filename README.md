@@ -4,8 +4,8 @@ A PySide6 desktop application for editing comma-separated image tag sidecars.
 
 ## Features
 
-- Opens one folder at a time, scans its top-level images, and can close it to
-  return the application to its empty state.
+- Opens one folder at a time, scans images recursively under it, and can close
+  it to return the application to its empty state.
 - Accepts a folder dragged onto the empty main window.
 - Resolves `{image_stem}.txt` first, then `{image_full}.txt`, and creates a
   missing stem sidecar automatically.
@@ -21,8 +21,8 @@ A PySide6 desktop application for editing comma-separated image tag sidecars.
   image and clear that input whenever the displayed image changes.
 - Uses UTF-8 sidecars and atomic per-file writes.
 
-Images with duplicate stems or sidecar-path collisions are excluded and
-reported. Unreadable tag files remain visible as read-only entries.
+Images with duplicate stems in the same folder or sidecar-path collisions are
+excluded and reported. Unreadable tag files remain visible as read-only entries.
 
 ## Run
 

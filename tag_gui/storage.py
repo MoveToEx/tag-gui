@@ -64,10 +64,12 @@ def _single_casefold_match(
 
 def scan_folder(directory: Path, supported_extensions: Iterable[str]) -> ScanResult:
     directory = Path(directory)
-    files = [path for path in directory.iterdir() if path.is_file()]
-    files_by_name: dict[str, list[Path]] = {}
+    files = [path for path in directory.rglob("*") if path.is_file()]
+    files_by_directory: dict[Path, dict[str, list[Path]]] = {}
     for path in files:
-        files_by_name.setdefault(path.name.casefold(), []).append(path)
+        files_by_directory.setdefault(path.parent, {}).setdefault(
+            path.name.casefold(), []
+        ).append(path)
 
     extensions = {
         extension.casefold()
@@ -77,20 +79,25 @@ def scan_folder(directory: Path, supported_extensions: Iterable[str]) -> ScanRes
     }
     images = sorted(
         (path for path in files if path.suffix.casefold() in extensions),
-        key=lambda path: (path.name.casefold(), path.name),
+        key=lambda path: (
+            str(path.relative_to(directory)).casefold(),
+            str(path.relative_to(directory)),
+        ),
     )
 
     result = ScanResult()
-    images_by_stem: dict[str, list[Path]] = {}
+    images_by_stem: dict[tuple[Path, str], list[Path]] = {}
     for image_path in images:
-        images_by_stem.setdefault(image_path.stem.casefold(), []).append(image_path)
+        images_by_stem.setdefault(
+            (image_path.parent, image_path.stem.casefold()), []
+        ).append(image_path)
 
     excluded: set[Path] = set()
     for group in images_by_stem.values():
         if len(group) <= 1:
             continue
         excluded.update(group)
-        names = ", ".join(path.name for path in group)
+        names = ", ".join(str(path.relative_to(directory)) for path in group)
         result.issues.append(
             ScanIssue(
                 f"Excluded duplicate image stems: {names}", tuple(group)
@@ -102,6 +109,7 @@ def scan_folder(directory: Path, supported_extensions: Iterable[str]) -> ScanRes
         if image_path in excluded:
             continue
 
+        files_by_name = files_by_directory[image_path.parent]
         stem_name = f"{image_path.stem}.txt"
         full_name = f"{image_path.name}.txt"
         stem_path, stem_error = _single_casefold_match(files_by_name, stem_name)
@@ -124,7 +132,7 @@ def scan_folder(directory: Path, supported_extensions: Iterable[str]) -> ScanRes
             tag_path = full_path
             create = False
         else:
-            tag_path = directory / stem_name
+            tag_path = image_path.parent / stem_name
             create = True
 
         resolved.append(
@@ -149,7 +157,7 @@ def scan_folder(directory: Path, supported_extensions: Iterable[str]) -> ScanRes
         result.issues.append(
             ScanIssue(
                 "Excluded images that resolve to the same sidecar: "
-                + ", ".join(path.name for path in paths),
+                + ", ".join(str(path.relative_to(directory)) for path in paths),
                 paths,
             )
         )

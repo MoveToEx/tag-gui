@@ -21,7 +21,7 @@ def touch_image(path: Path) -> None:
     path.write_bytes(b"not decoded by scanner")
 
 
-def test_scan_creates_stem_sidecar_and_ignores_nested_images(tmp_path: Path) -> None:
+def test_scan_creates_sidecars_for_nested_images(tmp_path: Path) -> None:
     touch_image(tmp_path / "one.JPG")
     nested = tmp_path / "nested"
     nested.mkdir()
@@ -29,9 +29,35 @@ def test_scan_creates_stem_sidecar_and_ignores_nested_images(tmp_path: Path) -> 
 
     result = scan_folder(tmp_path, IMAGE_EXTENSIONS)
 
-    assert [entry.image_path.name for entry in result.entries] == ["one.JPG"]
-    assert result.entries[0].tag_path.name == "one.txt"
+    entries = {
+        entry.image_path.relative_to(tmp_path).as_posix(): entry
+        for entry in result.entries
+    }
+    assert sorted(entries) == ["nested/two.jpg", "one.JPG"]
+    assert entries["one.JPG"].tag_path == tmp_path / "one.txt"
+    assert entries["nested/two.jpg"].tag_path == nested / "two.txt"
     assert (tmp_path / "one.txt").read_text(encoding="utf-8") == "\n"
+    assert (nested / "two.txt").read_text(encoding="utf-8") == "\n"
+
+
+def test_scan_allows_same_names_in_different_subfolders(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    touch_image(first / "sample.jpg")
+    touch_image(second / "sample.jpg")
+    (first / "sample.txt").write_text("first", encoding="utf-8")
+    (second / "sample.txt").write_text("second", encoding="utf-8")
+
+    result = scan_folder(tmp_path, IMAGE_EXTENSIONS)
+
+    entries = {
+        entry.image_path.relative_to(tmp_path).as_posix(): entry
+        for entry in result.entries
+    }
+    assert entries["first/sample.jpg"].tags == ["first"]
+    assert entries["second/sample.jpg"].tags == ["second"]
 
 
 def test_scan_prefers_stem_then_falls_back_to_full_name(tmp_path: Path) -> None:
