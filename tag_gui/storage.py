@@ -80,8 +80,10 @@ def scan_folder(directory: Path, supported_extensions: Iterable[str]) -> ScanRes
     images = sorted(
         (path for path in files if path.suffix.casefold() in extensions),
         key=lambda path: (
-            str(path.relative_to(directory)).casefold(),
-            str(path.relative_to(directory)),
+            str(path.parent.relative_to(directory)).casefold(),
+            str(path.parent.relative_to(directory)),
+            path.name.casefold(),
+            path.name,
         ),
     )
 

@@ -55,6 +55,27 @@ def test_navigation_actions_stop_at_boundaries(qtbot, tmp_path: Path) -> None:
     assert window.previous_action.isEnabled()
 
 
+def test_image_list_groups_images_by_subfolder(qtbot, tmp_path: Path) -> None:
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    create_png(tmp_path / "root.png")
+    create_png(nested / "child.png")
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window._load_directory(tmp_path, show_issues=False)
+
+    assert window.catalog.rowCount() == 2
+    assert window.catalog.data(window.catalog.index(0, 0)).startswith("root.png")
+    assert window.catalog.data(window.catalog.index(1, 0)).startswith("child.png")
+    assert window.catalog.group_for_row(0) == "Root folder"
+    assert window.catalog.group_for_row(1) == "nested"
+
+    window.next_action.trigger()
+    assert window.image_list.currentIndex().row() == 1
+    assert not window.next_action.isEnabled()
+
+
 def test_close_folder_empties_program_state(qtbot, tmp_path: Path) -> None:
     create_png(tmp_path / "sample.png")
     (tmp_path / "sample.txt").write_text("dog, cat\n", encoding="utf-8")

@@ -60,6 +60,21 @@ def test_scan_allows_same_names_in_different_subfolders(tmp_path: Path) -> None:
     assert entries["second/sample.jpg"].tags == ["second"]
 
 
+def test_scan_keeps_images_from_each_folder_contiguous(tmp_path: Path) -> None:
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    touch_image(tmp_path / "a.jpg")
+    touch_image(nested / "b.jpg")
+    touch_image(tmp_path / "z.jpg")
+
+    result = scan_folder(tmp_path, IMAGE_EXTENSIONS)
+
+    assert [
+        entry.image_path.relative_to(tmp_path).as_posix()
+        for entry in result.entries
+    ] == ["a.jpg", "z.jpg", "nested/b.jpg"]
+
+
 def test_scan_prefers_stem_then_falls_back_to_full_name(tmp_path: Path) -> None:
     touch_image(tmp_path / "a.jpg")
     (tmp_path / "a.txt").write_text("stem", encoding="utf-8")

@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .catalog import ImageCatalogModel
+from .catalog import GroupedImageDelegate, ImageCatalogModel
 from .domain import (
     ImageEntry,
     TagOperation,
@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
         self.image_list.setModel(self.catalog)
         self.image_list.setSelectionMode(QListView.SelectionMode.SingleSelection)
         self.image_list.setMinimumWidth(220)
+        self.image_list.setItemDelegate(GroupedImageDelegate(self.image_list))
         self.image_list.selectionModel().currentChanged.connect(
             self._current_image_changed
         )
@@ -169,11 +170,13 @@ class MainWindow(QMainWindow):
         self.previous_action.setShortcut(QKeySequence("PgUp"))
         self.next_action.setShortcut(QKeySequence("PgDown"))
         self.last_action.setShortcut(QKeySequence("Ctrl+End"))
-        self.first_action.triggered.connect(lambda: self._select_row(0))
+        self.first_action.triggered.connect(
+            lambda: self._select_optional_row(self.catalog.first_image_row())
+        )
         self.previous_action.triggered.connect(lambda: self._move_selection(-1))
         self.next_action.triggered.connect(lambda: self._move_selection(1))
         self.last_action.triggered.connect(
-            lambda: self._select_row(self.catalog.rowCount() - 1)
+            lambda: self._select_optional_row(self.catalog.last_image_row())
         )
 
         self.folder_tag_actions: dict[TagOperation, QAction] = {}
@@ -342,7 +345,7 @@ class MainWindow(QMainWindow):
 
         self.directory = directory
         self.settings.setValue("last_directory", str(directory))
-        self.catalog.set_entries(result.entries)
+        self.catalog.set_entries(result.entries, directory)
 
         row = (
             self.catalog.row_for_image(preferred_image)
@@ -350,7 +353,7 @@ class MainWindow(QMainWindow):
             else None
         )
         if row is None and result.entries:
-            row = 0
+            row = self.catalog.first_image_row()
         if row is not None:
             self._select_row(row)
         else:
@@ -373,7 +376,7 @@ class MainWindow(QMainWindow):
             )
 
     def _select_row(self, row: int) -> None:
-        if not 0 <= row < self.catalog.rowCount():
+        if self.catalog.entry(row) is None:
             return
         index = self.catalog.index(row, 0)
         self.image_list.setCurrentIndex(index)
@@ -384,9 +387,18 @@ class MainWindow(QMainWindow):
         )
         self.image_list.scrollTo(index)
 
+    def _select_optional_row(self, row: int | None) -> None:
+        if row is not None:
+            self._select_row(row)
+
     def _move_selection(self, offset: int) -> None:
         row = self.image_list.currentIndex().row()
-        self._select_row(row + offset)
+        target = (
+            self.catalog.next_image_row(row)
+            if offset > 0
+            else self.catalog.previous_image_row(row)
+        )
+        self._select_optional_row(target)
 
     def _current_entry(self) -> ImageEntry | None:
         return self.catalog.entry(self.image_list.currentIndex().row())
@@ -415,7 +427,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Enter a tag pattern to search for.", 4000)
             return
 
-        count = self.catalog.rowCount()
+        count = self.catalog.image_count
         if not count:
             self.statusBar().showMessage("Open a folder before searching tags.", 4000)
             return
@@ -520,7 +532,7 @@ class MainWindow(QMainWindow):
         self.image_view.clear_image("Loading image...")
         self.preview_loader.load(entry.image_path)
         details = [
-            f"{current.row() + 1}/{self.catalog.rowCount()}",
+            f"{self.catalog.image_position(current.row())}/{self.catalog.image_count}",
             entry.image_path.name,
             entry.tag_path.name,
         ]
@@ -692,7 +704,7 @@ class MainWindow(QMainWindow):
         self.image_view.zoom_out()
 
     def _update_action_states(self) -> None:
-        count = self.catalog.rowCount()
+        count = self.catalog.image_count
         row = self.image_list.currentIndex().row()
         has_current = 0 <= row < count
         current = self.catalog.entry(row)
@@ -703,10 +715,12 @@ class MainWindow(QMainWindow):
         self.rescan_action.setEnabled(has_directory)
         self.search_input.setEnabled(count > 0)
         self.focus_search_action.setEnabled(count > 0)
-        self.first_action.setEnabled(has_current and row > 0)
-        self.previous_action.setEnabled(has_current and row > 0)
-        self.next_action.setEnabled(has_current and row < count - 1)
-        self.last_action.setEnabled(has_current and row < count - 1)
+        has_previous = has_current and self.catalog.previous_image_row(row) is not None
+        has_next = has_current and self.catalog.next_image_row(row) is not None
+        self.first_action.setEnabled(has_previous)
+        self.previous_action.setEnabled(has_previous)
+        self.next_action.setEnabled(has_next)
+        self.last_action.setEnabled(has_next)
         self.tag_input.setEnabled(editable)
         self.tag_list.setEnabled(editable)
         for button in self.inline_buttons:
