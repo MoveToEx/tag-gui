@@ -346,6 +346,28 @@ def test_traversal_does_not_write_until_finish(qtbot, tmp_path: Path) -> None:
     assert tag_path.read_bytes() == b"cat, dog\n"
 
 
+def test_toggle_traversal_checks_existing_tags_and_hides_apply_all(
+    qtbot, tmp_path: Path
+) -> None:
+    image_path = tmp_path / "sample.png"
+    tag_path = tmp_path / "sample.txt"
+    create_png(image_path)
+    tag_path.write_bytes(b"cat, bird\n")
+    entry = ImageEntry(image_path, tag_path, ["cat", "bird"], b"cat, bird\n")
+
+    dialog = TraversalDialog([entry], TagOperation.TOGGLE, ["cat", "dog"])
+    qtbot.addWidget(dialog)
+
+    checked = [
+        dialog.choices.item(row).text()
+        for row in range(dialog.choices.count())
+        if dialog.choices.item(row).checkState() == Qt.CheckState.Checked
+    ]
+    assert checked == ["cat"]
+    assert not dialog.apply_all_button.isVisible()
+    assert not dialog.apply_all_button.isEnabled()
+
+
 def test_traversal_apply_all_requires_confirmation_and_commits_all_options(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:

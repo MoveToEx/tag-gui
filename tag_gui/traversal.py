@@ -115,6 +115,12 @@ class TraversalDialog(QDialog):
         self.apply_all_button.setToolTip(
             "Apply every available option to every image in this traversal"
         )
+        bulk_action_available = operation in {
+            TagOperation.ADD,
+            TagOperation.DELETE,
+        }
+        self.apply_all_button.setVisible(bulk_action_available)
+        self.apply_all_button.setEnabled(bulk_action_available)
         self.finish_button = QPushButton("Finish")
         self.stop_button = QPushButton("Stop")
         self.back_button.clicked.connect(self._back)
@@ -358,6 +364,8 @@ class TraversalDialog(QDialog):
         self._commit_changes(self.session.staged_changes())
 
     def _apply_all(self) -> None:
+        if self.session.operation not in {TagOperation.ADD, TagOperation.DELETE}:
+            return
         changes = self.session.all_available_changes()
         operation = {
             TagOperation.ADD: "add all available tags to",

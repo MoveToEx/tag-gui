@@ -214,6 +214,10 @@ class TraversalSession:
             return list(self.selections[target])
         if self.operation in {TagOperation.ADD, TagOperation.DELETE}:
             return []
+        if self.operation == TagOperation.TOGGLE:
+            item = self.items[target]
+            current = set(item.original_tags)
+            return [tag for tag in self.requested_tags if tag in current]
         return self.eligible_for(target)
 
     def result_for(

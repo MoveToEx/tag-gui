@@ -135,7 +135,18 @@ def test_add_and_delete_start_with_no_selected_tags(tmp_path: Path) -> None:
 
     assert add_session.selected_for() == []
     assert delete_session.selected_for() == []
-    assert toggle_session.selected_for() == ["cat", "dog"]
+    assert toggle_session.selected_for() == ["cat"]
+
+
+def test_toggle_traversal_defaults_to_existing_requested_tags(tmp_path: Path) -> None:
+    session = TraversalSession(
+        [_entry(tmp_path, "toggle.jpg", ["cat", "bird"])],
+        TagOperation.TOGGLE,
+        ["cat", "dog"],
+    )
+
+    assert session.selected_for() == ["cat"]
+    assert session.eligible_for() == ["cat", "dog"]
 
 
 def test_temporary_extra_tags_use_the_session_operation(tmp_path: Path) -> None:
