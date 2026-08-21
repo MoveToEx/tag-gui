@@ -9,6 +9,7 @@ from tag_gui.domain import (
     apply_tag_operation,
     filter_traversal_entries,
     normalize_tags,
+    matching_tag_counts,
     parse_requested_tags,
     parse_tags,
     serialize_tags,
@@ -29,6 +30,23 @@ def test_tag_search_pattern_supports_star_only() -> None:
     assert tag_matches_pattern("anything", "*")
     assert not tag_matches_pattern("Cat", "cat")
     assert not tag_matches_pattern("cat1", "cat?")
+
+
+def test_matching_tag_counts_returns_distinct_tags_and_image_counts(
+    tmp_path: Path,
+) -> None:
+    entries = [
+        _entry(tmp_path, "one.jpg", ["cat", "cathedral", "dog"]),
+        _entry(tmp_path, "two.jpg", ["cat", "category"]),
+    ]
+
+    assert matching_tag_counts(entries, "cat") == [("cat", 2)]
+    assert matching_tag_counts(entries, "cat*") == [
+        ("cat", 2),
+        ("category", 1),
+        ("cathedral", 1),
+    ]
+    assert matching_tag_counts(entries, "") == []
 
 
 def test_requested_tags_must_not_be_empty() -> None:

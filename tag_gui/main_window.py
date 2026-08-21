@@ -51,6 +51,7 @@ from .domain import (
     parse_requested_tags,
     tag_matches_pattern,
 )
+from .global_search import GlobalTagSearchDialog
 from .preview import ImageView, PreviewLoader
 from .storage import ExternalChangeError, scan_folder, write_tags_atomic
 from .traversal import TraversalDialog
@@ -158,6 +159,10 @@ class MainWindow(QMainWindow):
         self.focus_search_action.setShortcut(QKeySequence.StandardKey.Find)
         self.focus_search_action.triggered.connect(self._focus_tag_search)
 
+        self.global_search_action = QAction("Global Tag Search...", self)
+        self.global_search_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
+        self.global_search_action.triggered.connect(self._open_global_search)
+
         self.first_action = QAction("First", self)
         self.previous_action = QAction(
             "Previous", self
@@ -230,6 +235,7 @@ class MainWindow(QMainWindow):
 
         tags_menu = self.menuBar().addMenu("&Tags")
         tags_menu.addAction(self.focus_search_action)
+        tags_menu.addAction(self.global_search_action)
         tags_menu.addSeparator()
         for operation in TagOperation:
             tags_menu.addAction(self.folder_tag_actions[operation])
@@ -406,6 +412,11 @@ class MainWindow(QMainWindow):
     def _focus_tag_search(self) -> None:
         self.search_input.setFocus()
         self.search_input.selectAll()
+
+    def _open_global_search(self) -> None:
+        if not self.catalog.entries:
+            return
+        GlobalTagSearchDialog(self.catalog.entries, self).exec()
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
@@ -700,6 +711,7 @@ class MainWindow(QMainWindow):
         self.rescan_action.setEnabled(has_directory)
         self.search_input.setEnabled(count > 0)
         self.focus_search_action.setEnabled(count > 0)
+        self.global_search_action.setEnabled(count > 0)
         has_previous = has_current and self.catalog.previous_image_row(row) is not None
         has_next = has_current and self.catalog.next_image_row(row) is not None
         self.first_action.setEnabled(has_previous)

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 import re
+from collections import Counter
 from typing import Iterable, Sequence
 
 
@@ -69,6 +70,20 @@ def tag_matches_pattern(tag: str, pattern: str) -> bool:
         return False
     expression = ".*".join(re.escape(part) for part in pattern.split("*"))
     return re.fullmatch(expression, tag, flags=re.DOTALL) is not None
+
+
+def matching_tag_counts(
+    entries: Iterable[ImageEntry], pattern: str
+) -> list[tuple[str, int]]:
+    if not pattern:
+        return []
+    counts = Counter(
+        tag
+        for entry in entries
+        for tag in entry.tags
+        if tag_matches_pattern(tag, pattern)
+    )
+    return sorted(counts.items(), key=lambda item: (item[0].casefold(), item[0]))
 
 
 def eligible_tags(

@@ -12,6 +12,8 @@ A PySide6 desktop application for editing comma-separated image tag sidecars.
 - Displays an image list, scalable preview, and an inline tag editor.
 - Searches tags from the toolbar, including `*` wildcard matching, and cycles
   forward through matches with Enter or backward with Shift+Enter.
+- Provides a global tag-search window that lists every distinct exact or
+  wildcard match with its image count and a total match summary.
 - Provides staged folder traversal workflows for adding, deleting, toggling,
   and normalizing tags. Add traversals skip images that already have every
   requested tag; Delete traversals include images that have any requested tag.
