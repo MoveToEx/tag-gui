@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tag_gui.domain import (
     ImageEntry,
     TagOperation,
@@ -116,11 +118,19 @@ def test_delete_traversal_session_includes_partial_matches(tmp_path: Path) -> No
     assert session.eligible_for(1) == ["cat"]
 
 
-def test_toggle_and_normalize_traversals_do_not_filter(tmp_path: Path) -> None:
+def test_toggle_traversal_does_not_filter(tmp_path: Path) -> None:
     entries = [_entry(tmp_path, "one.jpg", []), _entry(tmp_path, "two.jpg", ["cat"])]
 
     assert filter_traversal_entries(entries, TagOperation.TOGGLE, ["cat"])
-    assert filter_traversal_entries(entries, TagOperation.NORMALIZE) == entries
+
+
+def test_normalize_is_not_a_traversal_operation(tmp_path: Path) -> None:
+    entries = [_entry(tmp_path, "normalize.jpg", ["z", "a"])]
+
+    with pytest.raises(ValueError, match="not a traversal operation"):
+        filter_traversal_entries(entries, TagOperation.NORMALIZE)
+    with pytest.raises(ValueError, match="not a traversal operation"):
+        TraversalSession(entries, TagOperation.NORMALIZE)
 
 
 def test_traversal_session_uses_filtered_candidates(tmp_path: Path) -> None:
@@ -219,12 +229,6 @@ def test_traversal_all_available_changes_uses_every_option(tmp_path: Path) -> No
         TagOperation.TOGGLE,
         ["cat", "dog"],
     )
-    normalize_session = TraversalSession(
-        [_entry(tmp_path, "normalize.jpg", ["z", "a", "z"])],
-        TagOperation.NORMALIZE,
-    )
-
     assert add_session.all_available_changes()[0][1] == ["bird", "cat", "dog"]
     assert delete_session.all_available_changes()[0][1] == ["bird"]
     assert toggle_session.all_available_changes()[0][1] == ["dog"]
-    assert normalize_session.all_available_changes()[0][1] == ["a", "z"]

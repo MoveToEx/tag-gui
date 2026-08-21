@@ -325,6 +325,59 @@ def test_global_search_action_requires_an_open_folder(qtbot, tmp_path: Path) -> 
     assert window.global_search_action.isEnabled()
 
 
+def test_normalize_applies_to_all_images_after_confirmation(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    for name, tags in {
+        "first": "zebra, apple\n",
+        "second": "night, bird\n",
+    }.items():
+        create_png(tmp_path / f"{name}.png")
+        (tmp_path / f"{name}.txt").write_text(
+            tags, encoding="utf-8", newline="\n"
+        )
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    window._select_row(1)
+    assert TagOperation.NORMALIZE not in window.folder_tag_actions
+    assert window.normalize_action.isEnabled()
+    confirmations: list[str] = []
+
+    def cancel(_parent, _title, message, *_args):
+        confirmations.append(message)
+        return QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(QMessageBox, "question", cancel)
+    window.normalize_action.trigger()
+
+    assert (tmp_path / "first.txt").read_text(encoding="utf-8") == (
+        "zebra, apple\n"
+    )
+    assert (tmp_path / "second.txt").read_text(encoding="utf-8") == (
+        "night, bird\n"
+    )
+    assert "all 2 editable image(s)" in confirmations[0]
+    assert "2 sidecar file(s) will change" in confirmations[0]
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: QMessageBox.StandardButton.Yes,
+    )
+    window.normalize_action.trigger()
+
+    assert (tmp_path / "first.txt").read_text(encoding="utf-8") == (
+        "apple, zebra\n"
+    )
+    assert (tmp_path / "second.txt").read_text(encoding="utf-8") == (
+        "bird, night\n"
+    )
+    assert window.image_list.currentIndex().row() == 1
+    assert window.statusBar().currentMessage() == "Normalized tags in 2 file(s)."
+
+
 def test_dropped_folder_replaces_open_folder(qtbot, tmp_path: Path) -> None:
     first_folder = tmp_path / "first"
     second_folder = tmp_path / "second"

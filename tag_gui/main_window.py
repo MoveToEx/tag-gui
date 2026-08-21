@@ -49,12 +49,20 @@ from .domain import (
     TagOperation,
     apply_tag_operation,
     filter_traversal_entries,
+    normalize_tags,
     parse_requested_tags,
     tag_matches_pattern,
 )
 from .global_search import GlobalTagSearchDialog
 from .preview import ImageView, PreviewLoader
-from .storage import ExternalChangeError, scan_folder, write_tags_atomic
+from .storage import (
+    BatchPreflightError,
+    ExternalChangeError,
+    WriteRequest,
+    scan_folder,
+    write_tags_atomic,
+    write_tags_batch,
+)
 from .traversal import TraversalDialog
 
 
@@ -209,7 +217,6 @@ class MainWindow(QMainWindow):
             TagOperation.ADD: "Add Tags...",
             TagOperation.DELETE: "Delete Tags...",
             TagOperation.TOGGLE: "Toggle Tags...",
-            TagOperation.NORMALIZE: "Normalize Tags...",
         }
         for operation, label in labels.items():
             action = QAction(label, self)
@@ -217,6 +224,9 @@ class MainWindow(QMainWindow):
                 lambda checked=False, op=operation: self._start_traversal(op)
             )
             self.folder_tag_actions[operation] = action
+
+        self.normalize_action = QAction("Normalize All Tags...", self)
+        self.normalize_action.triggered.connect(self._normalize_all_tags)
 
         self.fit_action = QAction("Fit to Window", self)
         self.fit_action.setCheckable(True)
@@ -257,8 +267,10 @@ class MainWindow(QMainWindow):
         tags_menu.addAction(self.focus_search_action)
         tags_menu.addAction(self.global_search_action)
         tags_menu.addSeparator()
-        for operation in TagOperation:
-            tags_menu.addAction(self.folder_tag_actions[operation])
+        for action in self.folder_tag_actions.values():
+            tags_menu.addAction(action)
+        tags_menu.addSeparator()
+        tags_menu.addAction(self.normalize_action)
 
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.fit_action)
@@ -734,6 +746,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Saved {entry.tag_path.name}", 3000)
 
     def _start_traversal(self, operation: TagOperation) -> None:
+        if operation == TagOperation.NORMALIZE:
+            raise ValueError("Normalization is not a traversal operation.")
         editable_entries = [entry for entry in self.catalog.entries if entry.editable]
         if not editable_entries:
             QMessageBox.information(
@@ -741,20 +755,18 @@ class MainWindow(QMainWindow):
             )
             return
 
-        requested: list[str] = []
-        if operation != TagOperation.NORMALIZE:
-            text, accepted = QInputDialog.getText(
-                self,
-                self.folder_tag_actions[operation].text().replace("...", ""),
-                "Comma-separated tags:",
-            )
-            if not accepted:
-                return
-            try:
-                requested = parse_requested_tags(text)
-            except ValueError as exc:
-                QMessageBox.warning(self, "Invalid Tags", str(exc))
-                return
+        text, accepted = QInputDialog.getText(
+            self,
+            self.folder_tag_actions[operation].text().replace("...", ""),
+            "Comma-separated tags:",
+        )
+        if not accepted:
+            return
+        try:
+            requested = parse_requested_tags(text)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Tags", str(exc))
+            return
 
         entries = filter_traversal_entries(editable_entries, operation, requested)
         if not entries:
@@ -762,7 +774,6 @@ class MainWindow(QMainWindow):
                 TagOperation.ADD: "Every editable image already has all specified tags.",
                 TagOperation.DELETE: "No editable image has any specified tag.",
                 TagOperation.TOGGLE: "No editable images are available for toggling.",
-                TagOperation.NORMALIZE: "No editable images are available for normalization.",
             }[operation]
             QMessageBox.information(self, "Nothing to Traverse", message)
             return
@@ -774,6 +785,77 @@ class MainWindow(QMainWindow):
                 self.directory,
                 preferred_image=current.image_path if current else None,
                 show_issues=False,
+            )
+
+    def _normalize_all_tags(self) -> None:
+        editable_entries = [entry for entry in self.catalog.entries if entry.editable]
+        if not editable_entries:
+            QMessageBox.information(
+                self,
+                "No Editable Images",
+                "Open a folder with editable image tags first.",
+            )
+            return
+
+        changes = [
+            (entry, normalized)
+            for entry in editable_entries
+            if (normalized := normalize_tags(entry.tags)) != entry.tags
+        ]
+        if not changes:
+            QMessageBox.information(
+                self,
+                "Tags Already Normalized",
+                "All editable image tags are already normalized.",
+            )
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Normalize All Tags?",
+            "This will normalize tags on all "
+            f"{len(editable_entries)} editable image(s) in the open folder.\n\n"
+            f"{len(changes)} sidecar file(s) will change.\n\nContinue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        requests = [
+            WriteRequest(
+                path=entry.tag_path,
+                tags=normalized,
+                expected_bytes=entry.source_bytes,
+            )
+            for entry, normalized in changes
+        ]
+        try:
+            result = write_tags_batch(requests)
+        except BatchPreflightError as exc:
+            QMessageBox.critical(self, "Could Not Normalize Tags", str(exc))
+            return
+
+        current = self._current_entry()
+        if self.directory is not None:
+            self._load_directory(
+                self.directory,
+                preferred_image=current.image_path if current else None,
+                show_issues=False,
+            )
+        if result.failures:
+            details = "\n".join(
+                f"{path.name}: {message}"
+                for path, message in result.failures.items()
+            )
+            QMessageBox.warning(
+                self,
+                "Some Files Were Not Normalized",
+                f"Normalized {len(result.succeeded)} file(s).\n\n{details}",
+            )
+        else:
+            self.statusBar().showMessage(
+                f"Normalized tags in {len(result.succeeded)} file(s).", 4000
             )
 
     def _actual_size(self) -> None:
@@ -814,6 +896,7 @@ class MainWindow(QMainWindow):
         any_editable = any(entry.editable for entry in self.catalog.entries)
         for action in self.folder_tag_actions.values():
             action.setEnabled(any_editable)
+        self.normalize_action.setEnabled(any_editable)
         for action in [
             self.fit_action,
             self.actual_size_action,

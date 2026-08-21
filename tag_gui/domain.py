@@ -112,7 +112,9 @@ def should_traverse_entry(
     entries that contain none of the requested tags, so both workflows avoid
     presenting no-op candidates by default.
     """
-    if operation not in {TagOperation.ADD, TagOperation.DELETE}:
+    if operation == TagOperation.NORMALIZE:
+        raise ValueError("Normalization is not a traversal operation.")
+    if operation == TagOperation.TOGGLE:
         return True
     current = set(current_tags)
     requested = set(requested_tags)
@@ -187,7 +189,9 @@ class TraversalSession:
         operation: TagOperation,
         requested_tags: Sequence[str] = (),
     ) -> None:
-        if operation != TagOperation.NORMALIZE and not requested_tags:
+        if operation == TagOperation.NORMALIZE:
+            raise ValueError("Normalization is not a traversal operation.")
+        if not requested_tags:
             raise ValueError("This operation requires at least one tag.")
 
         self.operation = operation
@@ -243,8 +247,6 @@ class TraversalSession:
     ) -> list[str]:
         target = self.current_index if index is None else index
         item = self.items[target]
-        if self.operation == TagOperation.NORMALIZE:
-            return normalize_tags(item.original_tags)
         operation_tags = list(selected_tags)
         if self.operation in {TagOperation.ADD, TagOperation.DELETE}:
             operation_tags.extend(extra_tags)
@@ -255,17 +257,13 @@ class TraversalSession:
         selected_tags: Sequence[str] = (),
         extra_tags: Sequence[str] = (),
     ) -> list[str]:
-        if self.operation == TagOperation.NORMALIZE:
-            selected = ()
-            extras = ()
-        else:
-            eligible = set(self.eligible_for())
-            selected = tuple(tag for tag in unique_tags(selected_tags) if tag in eligible)
-            extras = (
-                tuple(unique_tags(extra_tags))
-                if self.operation in {TagOperation.ADD, TagOperation.DELETE}
-                else ()
-            )
+        eligible = set(self.eligible_for())
+        selected = tuple(tag for tag in unique_tags(selected_tags) if tag in eligible)
+        extras = (
+            tuple(unique_tags(extra_tags))
+            if self.operation in {TagOperation.ADD, TagOperation.DELETE}
+            else ()
+        )
 
         result = self.result_for(selected, extras)
         self.reviewed.add(self.current_index)

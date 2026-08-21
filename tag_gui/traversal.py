@@ -54,7 +54,6 @@ class TraversalDialog(QDialog):
             TagOperation.ADD: "Add Tags Across Folder",
             TagOperation.DELETE: "Delete Tags Across Folder",
             TagOperation.TOGGLE: "Toggle Tags Across Folder",
-            TagOperation.NORMALIZE: "Normalize Tags Across Folder",
         }[operation]
         self.setWindowTitle(title)
         self.resize(980, 680)
@@ -211,25 +210,21 @@ class TraversalDialog(QDialog):
         self._populating_choices = True
         self.temporary_input.clear()
         self.choices.clear()
-        if self.session.operation == TagOperation.NORMALIZE:
-            self.choice_label.setText("Normalization")
-            self.choices.hide()
-        else:
-            self.choice_label.setText("Tags to apply")
-            self.choices.show()
-            selected = set(self.session.selected_for())
-            for tag in self.session.eligible_for():
-                choice = QListWidgetItem(tag)
-                choice.setFlags(choice.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                choice.setCheckState(
-                    Qt.CheckState.Checked
-                    if tag in selected
-                    else Qt.CheckState.Unchecked
-                )
-                self.choices.addItem(choice)
-            if self.choices.count():
-                self.choices.setCurrentRow(0)
-                self.choices.setFocus()
+        self.choice_label.setText("Tags to apply")
+        self.choices.show()
+        selected = set(self.session.selected_for())
+        for tag in self.session.eligible_for():
+            choice = QListWidgetItem(tag)
+            choice.setFlags(choice.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            choice.setCheckState(
+                Qt.CheckState.Checked
+                if tag in selected
+                else Qt.CheckState.Unchecked
+            )
+            self.choices.addItem(choice)
+        if self.choices.count():
+            self.choices.setCurrentRow(0)
+            self.choices.setFocus()
         show_temporary = self.session.operation in {
             TagOperation.ADD,
             TagOperation.DELETE,
@@ -306,11 +301,7 @@ class TraversalDialog(QDialog):
     def _update_result_preview(self, *_args) -> None:
         if self._populating_choices:
             return
-        selected = (
-            []
-            if self.session.operation == TagOperation.NORMALIZE
-            else self._checked_tags()
-        )
+        selected = self._checked_tags()
         extras = self._temporary_tags()
         prior = self.session.selections.get(self.session.current_index)
         staged = self.session.staged.get(self.session.current_index)
@@ -320,16 +311,13 @@ class TraversalDialog(QDialog):
             result = self.session.result_for(selected, extras)
         self.result_tags.setPlainText(", ".join(result) or "(none)")
         self.apply_button.setEnabled(
-            self.session.operation == TagOperation.NORMALIZE
-            or bool(selected)
-            or bool(extras)
+            bool(selected) or bool(extras)
         )
-        if self.session.operation != TagOperation.NORMALIZE:
-            if prior is not None and tuple(selected) == prior and not extras:
-                self.session.reviewed.add(self.session.current_index)
-            elif prior is not None:
-                self.session.reviewed.discard(self.session.current_index)
-            self._update_buttons()
+        if prior is not None and tuple(selected) == prior and not extras:
+            self.session.reviewed.add(self.session.current_index)
+        elif prior is not None:
+            self.session.reviewed.discard(self.session.current_index)
+        self._update_buttons()
 
     def _update_buttons(self) -> None:
         at_last = self.session.at_last
@@ -371,7 +359,6 @@ class TraversalDialog(QDialog):
             TagOperation.ADD: "add all available tags to",
             TagOperation.DELETE: "delete all available tags from",
             TagOperation.TOGGLE: "toggle all available tags on",
-            TagOperation.NORMALIZE: "normalize tags for",
         }[self.session.operation]
         message = (
             f"This will immediately {operation} all "
