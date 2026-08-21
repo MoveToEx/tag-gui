@@ -295,7 +295,7 @@ class MainWindow(QMainWindow):
         self._update_action_states()
 
     def _dropped_directory(self, event) -> Path | None:
-        if self.directory is not None or not event.mimeData().hasUrls():
+        if not event.mimeData().hasUrls():
             return None
         urls = event.mimeData().urls()
         if len(urls) != 1 or not urls[0].isLocalFile():
@@ -324,6 +324,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         event.acceptProposedAction()
+        self.close_folder()
         self._load_directory(directory, show_issues=True)
 
     def rescan(self) -> None:

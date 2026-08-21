@@ -316,10 +316,15 @@ def test_global_search_action_requires_an_open_folder(qtbot, tmp_path: Path) -> 
     assert window.global_search_action.isEnabled()
 
 
-def test_empty_main_window_accepts_one_dropped_folder(qtbot, tmp_path: Path) -> None:
-    create_png(tmp_path / "sample.png")
+def test_dropped_folder_replaces_open_folder(qtbot, tmp_path: Path) -> None:
+    first_folder = tmp_path / "first"
+    second_folder = tmp_path / "second"
+    first_folder.mkdir()
+    second_folder.mkdir()
+    create_png(first_folder / "first.png")
+    create_png(second_folder / "second.png")
     mime_data = QMimeData()
-    mime_data.setUrls([QUrl.fromLocalFile(str(tmp_path))])
+    mime_data.setUrls([QUrl.fromLocalFile(str(first_folder))])
     window = MainWindow()
     qtbot.addWidget(window)
 
@@ -342,18 +347,38 @@ def test_empty_main_window_accepts_one_dropped_folder(qtbot, tmp_path: Path) -> 
     )
     window.dropEvent(drop_event)
     assert drop_event.isAccepted()
-    assert window.directory == tmp_path
+    assert window.directory == first_folder
     assert window.catalog.rowCount() == 1
 
+    window.tag_input.setText("stale tag")
+    window.search_input.setText("stale search")
+    replacement_mime_data = QMimeData()
+    replacement_mime_data.setUrls([QUrl.fromLocalFile(str(second_folder))])
     second_drag = QDragEnterEvent(
         QPoint(20, 20),
         Qt.DropAction.CopyAction,
-        mime_data,
+        replacement_mime_data,
         Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
     )
     window.dragEnterEvent(second_drag)
-    assert not second_drag.isAccepted()
+    assert second_drag.isAccepted()
+
+    second_drop = QDropEvent(
+        QPointF(20, 20),
+        Qt.DropAction.CopyAction,
+        replacement_mime_data,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.dropEvent(second_drop)
+
+    assert second_drop.isAccepted()
+    assert window.directory == second_folder
+    assert window.catalog.rowCount() == 1
+    assert window.catalog.entries[0].image_path == second_folder / "second.png"
+    assert window.tag_input.text() == ""
+    assert window.search_input.text() == ""
 
 
 def test_tag_context_copy_uses_comma_space_separator(qtbot, tmp_path: Path) -> None:
