@@ -286,7 +286,9 @@ def test_tag_context_copy_uses_comma_space_separator(qtbot, tmp_path: Path) -> N
     assert QGuiApplication.clipboard().text() == "dog, bird"
 
 
-def test_tag_context_delete_requires_confirmation(qtbot, tmp_path: Path, monkeypatch) -> None:
+def test_tag_context_delete_does_not_require_confirmation(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
     create_png(tmp_path / "sample.png")
     tag_path = tmp_path / "sample.txt"
     tag_path.write_text("dog, cat, bird\n", encoding="utf-8", newline="\n")
@@ -296,24 +298,14 @@ def test_tag_context_delete_requires_confirmation(qtbot, tmp_path: Path, monkeyp
 
     window.tag_list.item(0).setSelected(True)
     window.tag_list.item(2).setSelected(True)
-    questions: list[str] = []
-
-    def cancel(_parent, _title, message, *_args):
-        questions.append(message)
-        return QMessageBox.StandardButton.Cancel
-
-    monkeypatch.setattr(QMessageBox, "question", cancel)
-    window._confirm_delete_selected_tags()
-
-    assert tag_path.read_text(encoding="utf-8") == "dog, cat, bird\n"
-    assert "dog, bird" in questions[0]
-
     monkeypatch.setattr(
         QMessageBox,
         "question",
-        lambda *_args: QMessageBox.StandardButton.Yes,
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("context-menu tag deletion should not confirm")
+        ),
     )
-    window._confirm_delete_selected_tags()
+    window._delete_selected_tags()
 
     assert tag_path.read_text(encoding="utf-8") == "cat\n"
     assert [item.text() for item in window.tag_list.selectedItems()] == []
