@@ -18,6 +18,7 @@ from PySide6.QtGui import (
     QDragMoveEvent,
     QDropEvent,
     QGuiApplication,
+    QImage,
     QImageReader,
     QKeyEvent,
     QKeySequence,
@@ -79,6 +80,25 @@ class MainWindow(QMainWindow):
         self.image_view = ImageView()
         self.preview_loader = PreviewLoader(self)
         self.preview_loader.loaded.connect(self._preview_loaded)
+        self.image_info_label = QLabel("No image selected")
+        self.image_info_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.image_info_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.image_info_label.setContentsMargins(10, 6, 10, 6)
+        self.image_info_label.setStyleSheet(
+            "QLabel { background: #e4e7ec; color: #344054; "
+            "border-top: 1px solid #d0d5dd; }"
+        )
+
+        image_panel = QWidget()
+        image_layout = QVBoxLayout(image_panel)
+        image_layout.setContentsMargins(0, 0, 0, 0)
+        image_layout.setSpacing(0)
+        image_layout.addWidget(self.image_view, 1)
+        image_layout.addWidget(self.image_info_label)
 
         self.tag_list = QListWidget()
         self.tag_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
@@ -125,7 +145,7 @@ class MainWindow(QMainWindow):
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self.image_list)
-        self.splitter.addWidget(self.image_view)
+        self.splitter.addWidget(image_panel)
         self.splitter.addWidget(tag_panel)
         self.splitter.setSizes([250, 650, 300])
         self.setCentralWidget(self.splitter)
@@ -288,10 +308,12 @@ class MainWindow(QMainWindow):
         self.image_list.setCurrentIndex(QModelIndex())
         self.catalog.set_entries([])
         self.image_view.clear_image("Open a folder to begin")
+        self._set_image_info(None)
         self.tag_list.clear()
         self.tag_input.clear()
         self.search_input.clear()
         self.statusBar().clearMessage()
+        self._update_window_title()
         self._update_action_states()
 
     def _dropped_directory(self, event) -> Path | None:
@@ -351,6 +373,7 @@ class MainWindow(QMainWindow):
             return
 
         self.directory = directory
+        self._update_window_title()
         self.settings.setValue("last_directory", str(directory))
         self.catalog.set_entries(result.entries, directory)
 
@@ -367,6 +390,7 @@ class MainWindow(QMainWindow):
             self.image_list.clearSelection()
             self.preview_loader.clear()
             self.image_view.clear_image("No supported images found")
+            self._set_image_info(None)
             self.tag_list.clear()
 
         self._update_action_states()
@@ -537,11 +561,13 @@ class MainWindow(QMainWindow):
         if entry is None:
             self.preview_loader.clear()
             self.image_view.clear_image()
+            self._set_image_info(None)
             self._update_action_states()
             return
 
         self.tag_list.addItems(entry.tags)
         self.image_view.clear_image("Loading image...")
+        self._set_image_info(entry)
         self.preview_loader.load(entry.image_path)
         details = [
             f"{self.catalog.image_position(current.row())}/{self.catalog.image_count}",
@@ -555,11 +581,73 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(" | ".join(details))
         self._update_action_states()
 
-    def _preview_loaded(self, image, error: str) -> None:
+    def _preview_loaded(self, image: QImage, error: str) -> None:
+        entry = self._current_entry()
         if error or image.isNull():
             self.image_view.clear_image(f"Could not display image\n{error}")
+            self._set_image_info(entry, error=error or "Could not read image")
         else:
             self.image_view.set_image(image)
+            self._set_image_info(entry, image)
+
+    def _update_window_title(self) -> None:
+        title = "Image Tagger"
+        if self.directory is not None:
+            folder_name = self.directory.name or str(self.directory)
+            title = f"{folder_name} - {title}"
+        self.setWindowTitle(title)
+
+    def _set_image_info(
+        self,
+        entry: ImageEntry | None,
+        image: QImage | None = None,
+        *,
+        error: str = "",
+    ) -> None:
+        if entry is None:
+            self.image_info_label.setText("No image selected")
+            self.image_info_label.setToolTip("")
+            return
+
+        display_path = entry.image_path.name
+        if self.directory is not None:
+            try:
+                display_path = str(entry.image_path.relative_to(self.directory))
+            except ValueError:
+                pass
+
+        details = [display_path]
+        if image is not None and not image.isNull():
+            details.append(f"{image.width()} × {image.height()} px")
+        elif error:
+            details.append("Dimensions unavailable")
+        else:
+            details.append("Loading dimensions...")
+
+        image_format = entry.image_path.suffix.removeprefix(".").upper()
+        if image_format:
+            details.append(image_format)
+        try:
+            details.append(self._format_file_size(entry.image_path.stat().st_size))
+        except OSError:
+            details.append("Size unavailable")
+        if error:
+            details.append(error)
+
+        self.image_info_label.setText(" | ".join(details))
+        self.image_info_label.setToolTip(str(entry.image_path))
+
+    @staticmethod
+    def _format_file_size(size: int) -> str:
+        value = float(size)
+        units = ("B", "KB", "MB", "GB", "TB")
+        for unit in units:
+            if value < 1024 or unit == units[-1]:
+                if unit == "B":
+                    return f"{int(value)} {unit}"
+                return f"{value:.1f} {unit}"
+            value /= 1024
+        return f"{size} B"
 
     def _requested_from_input(self) -> list[str] | None:
         try:

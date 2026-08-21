@@ -40,6 +40,13 @@ def test_main_window_loads_folder_and_edits_current_tags(qtbot, tmp_path: Path) 
         "dog",
         "cat",
     ]
+    assert window.windowTitle() == f"{tmp_path.name} - Image Tagger"
+
+    qtbot.waitUntil(lambda: "32 × 24 px" in window.image_info_label.text())
+    image_info = window.image_info_label.text()
+    assert "sample.png" in image_info
+    assert "PNG" in image_info
+    assert image_info.endswith(" B")
 
     window.tag_input.setText("bird")
     window._add_current_tags()
@@ -104,6 +111,8 @@ def test_close_folder_empties_program_state(qtbot, tmp_path: Path) -> None:
     assert window.search_input.text() == ""
     assert window.image_view._pixmap is None
     assert window.image_view._label.text() == "Open a folder to begin"
+    assert window.image_info_label.text() == "No image selected"
+    assert window.windowTitle() == "Image Tagger"
     assert window.statusBar().currentMessage() == ""
     assert not window.close_folder_action.isEnabled()
     assert not window.rescan_action.isEnabled()
