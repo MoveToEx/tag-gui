@@ -72,22 +72,43 @@ def test_navigation_actions_stop_at_boundaries(qtbot, tmp_path: Path) -> None:
 
 def test_image_list_groups_images_by_subfolder(qtbot, tmp_path: Path) -> None:
     nested = tmp_path / "nested"
+    deep = nested / "deep"
     nested.mkdir()
+    deep.mkdir()
     create_png(tmp_path / "root.png")
     create_png(nested / "child.png")
+    create_png(deep / "grandchild.png")
     window = MainWindow()
     qtbot.addWidget(window)
 
     window._load_directory(tmp_path, show_issues=False)
 
     assert window.catalog.rowCount() == 2
-    assert window.catalog.data(window.catalog.index(0, 0)).startswith("root.png")
-    assert window.catalog.data(window.catalog.index(1, 0)).startswith("child.png")
+    nested_index = window.catalog.index(0, 0)
+    assert window.catalog.data(nested_index) == "nested"
+    assert window.catalog.entry_for_index(nested_index) is None
+    assert window.catalog.rowCount(nested_index) == 2
+    assert window.catalog.data(window.catalog.index(0, 0, nested_index)) == "deep"
+    assert window.catalog.data(
+        window.catalog.index(1, 0, nested_index)
+    ).startswith("child.png")
+    assert window.catalog.data(window.catalog.index(1, 0)).startswith("root.png")
     assert window.catalog.group_for_row(0) == "Root folder"
     assert window.catalog.group_for_row(1) == "nested"
+    assert window.catalog.group_for_row(2) == "nested/deep"
 
+    window.image_list.collapse(nested_index)
+    assert not window.image_list.isExpanded(nested_index)
+    window.image_list.expand(nested_index)
+    assert window.image_list.isExpanded(nested_index)
     window.next_action.trigger()
-    assert window.image_list.currentIndex().row() == 1
+    current = window._current_entry()
+    assert current is not None
+    assert current.image_path == nested / "child.png"
+    window.next_action.trigger()
+    current = window._current_entry()
+    assert current is not None
+    assert current.image_path == deep / "grandchild.png"
     assert not window.next_action.isEnabled()
 
 
@@ -678,3 +699,83 @@ def test_traversal_temporary_extra_tags_clear_on_image_switch(qtbot, tmp_path: P
     assert dialog.session.current_index == 1
     assert dialog.temporary_input.text() == ""
     assert dialog.session.staged[0] == ("cat", "image_only", "temporary")
+
+
+def test_traversal_folder_tree_combines_checked_subtrees(
+    qtbot, tmp_path: Path
+) -> None:
+    nested = tmp_path / "nested"
+    deep = nested / "deep"
+    other = tmp_path / "other"
+    deep.mkdir(parents=True)
+    other.mkdir()
+    entries: list[ImageEntry] = []
+    for image_path in [
+        tmp_path / "root.png",
+        nested / "child.png",
+        deep / "grandchild.png",
+        other / "other.png",
+    ]:
+        create_png(image_path)
+        tag_path = image_path.with_suffix(".txt")
+        tag_path.write_text("cat\n", encoding="utf-8")
+        entries.append(ImageEntry(image_path, tag_path, ["cat"], b"cat\n"))
+
+    dialog = TraversalDialog(
+        entries,
+        TagOperation.ADD,
+        ["dog"],
+        root_directory=tmp_path,
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.folder_setup.isVisibleTo(dialog)
+    assert not dialog.traversal_widget.isVisibleTo(dialog)
+    assert dialog.tag_input.text() == "dog"
+    root_item = dialog.folder_tree.topLevelItem(0)
+    assert root_item is not None
+    assert root_item.text(0) == tmp_path.name
+    assert root_item.childCount() == 2
+    nested_item = None
+    for index in range(root_item.childCount()):
+        child = root_item.child(index)
+        if child is not None and child.text(0) == "nested":
+            nested_item = child
+            break
+    assert nested_item is not None
+    assert nested_item.childCount() == 1
+    deep_item = nested_item.child(0)
+    assert deep_item is not None
+    assert deep_item.text(0) == "deep"
+    other_item = None
+    for index in range(root_item.childCount()):
+        child = root_item.child(index)
+        if child is not None and child.text(0) == "other":
+            other_item = child
+            break
+    assert other_item is not None
+
+    assert root_item.checkState(0) == Qt.CheckState.Checked
+    assert nested_item.checkState(0) == Qt.CheckState.Checked
+    assert deep_item.checkState(0) == Qt.CheckState.Checked
+    root_item.setCheckState(0, Qt.CheckState.Unchecked)
+    nested_item.setCheckState(0, Qt.CheckState.Checked)
+    assert deep_item.checkState(0) == Qt.CheckState.Checked
+    assert dialog.folder_selection_label.text() == (
+        "2 matching image(s) will be included."
+    )
+    other_item.setCheckState(0, Qt.CheckState.Checked)
+    assert root_item.checkState(0) == Qt.CheckState.PartiallyChecked
+    assert dialog.folder_selection_label.text() == (
+        "3 matching image(s) will be included."
+    )
+    dialog.start_button.click()
+
+    assert dialog._started
+    assert not dialog.folder_setup.isVisibleTo(dialog)
+    assert dialog.traversal_widget.isVisibleTo(dialog)
+    assert [item.image_path for item in dialog.session.items] == [
+        nested / "child.png",
+        deep / "grandchild.png",
+        other / "other.png",
+    ]

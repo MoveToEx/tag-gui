@@ -1,23 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import override
 
-from PySide6.QtCore import (
-    QAbstractListModel,
-    QModelIndex,
-    QPersistentModelIndex,
-    QRect,
-    QSize,
-    Qt,
-)
-from PySide6.QtGui import QColor, QFont, QPainter
-from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, Qt
+from PySide6.QtGui import QColor, QStandardItem, QStandardItemModel
 
 from .domain import ImageEntry
 
 
-class ImageCatalogModel(QAbstractListModel):
+class ImageCatalogModel(QStandardItemModel):
+    """Hierarchical folder model with a stable flat image order for navigation."""
+
     EntryRole = int(Qt.ItemDataRole.UserRole) + 1
     GroupRole = int(Qt.ItemDataRole.UserRole) + 2
 
@@ -25,63 +18,102 @@ class ImageCatalogModel(QAbstractListModel):
         super().__init__(parent)
         self.entries: list[ImageEntry] = []
         self.groups: list[str] = []
-
-    @override
-    def rowCount(
-        self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()
-    ) -> int:
-        return 0 if parent.isValid() else len(self.entries)
-
-    @override
-    def data(
-        self,
-        index: QModelIndex | QPersistentModelIndex,
-        role: int = Qt.ItemDataRole.DisplayRole,
-    ):
-        if not index.isValid() or not 0 <= index.row() < len(self.entries):
-            return None
-        entry = self.entries[index.row()]
-
-        if role == Qt.ItemDataRole.DisplayRole:
-            suffix = " [read-only]" if not entry.editable else ""
-            return f"{entry.image_path.name}  ({len(entry.tags)}){suffix}"
-        if role == Qt.ItemDataRole.ToolTipRole:
-            details = [str(entry.image_path), f"Tags: {entry.tag_path.name}"]
-            details.extend(entry.warnings)
-            if entry.error:
-                details.append(entry.error)
-            return "\n".join(details)
-        if role == Qt.ItemDataRole.ForegroundRole and entry.error:
-            return QColor("#b42318")
-        if role == self.EntryRole:
-            return entry
-        if role == self.GroupRole:
-            return self.groups[index.row()]
-        return None
+        self._image_items: list[QStandardItem] = []
+        self.setHorizontalHeaderLabels(["Images"])
 
     def set_entries(
         self, entries: list[ImageEntry], root_directory: Path | None = None
     ) -> None:
-        self.beginResetModel()
+        self.clear()
+        self.setHorizontalHeaderLabels(["Images"])
         self.entries = entries
         self.groups = []
+        self._image_items = []
+
+        root_item = self.invisibleRootItem()
+        folder_items: dict[Path, QStandardItem] = {Path("."): root_item}
+        relative_parents: list[Path] = []
+
         for entry in entries:
             if root_directory is None:
-                group = entry.image_path.parent.name or "Root folder"
+                relative_parent = Path(entry.image_path.parent.name or ".")
             else:
                 relative_parent = entry.image_path.parent.relative_to(root_directory)
-                group = (
-                    "Root folder"
-                    if relative_parent == Path(".")
-                    else relative_parent.as_posix()
-                )
-            self.groups.append(group)
-        self.endResetModel()
+            relative_parents.append(relative_parent)
+            self.groups.append(
+                "Root folder"
+                if relative_parent == Path(".")
+                else relative_parent.as_posix()
+            )
+
+        folders = sorted(
+            {
+                ancestor
+                for relative_parent in relative_parents
+                for ancestor in _folder_ancestors(relative_parent)
+            },
+            key=lambda path: (
+                len(path.parts),
+                tuple(part.casefold() for part in path.parts),
+                path.as_posix(),
+            ),
+        )
+        for relative_folder in folders:
+            parent_path = relative_folder.parent
+            parent_item = folder_items[parent_path]
+            folder_item = QStandardItem(relative_folder.name)
+            folder_item.setEditable(False)
+            folder_item.setSelectable(False)
+            folder_item.setToolTip(relative_folder.as_posix())
+            parent_item.appendRow(folder_item)
+            folder_items[relative_folder] = folder_item
+
+        image_items: list[QStandardItem | None] = [None] * len(entries)
+        for row, entry in enumerate(entries):
+            if relative_parents[row] != Path("."):
+                continue
+            item = QStandardItem()
+            item.setEditable(False)
+            self._update_image_item(item, entry, self.groups[row])
+            root_item.appendRow(item)
+            image_items[row] = item
+        for row, entry in enumerate(entries):
+            if relative_parents[row] == Path("."):
+                continue
+            item = QStandardItem()
+            item.setEditable(False)
+            self._update_image_item(item, entry, self.groups[row])
+            folder_items[relative_parents[row]].appendRow(item)
+            image_items[row] = item
+        self._image_items = [
+            item for item in image_items if item is not None
+        ]
 
     def entry(self, row: int) -> ImageEntry | None:
         if 0 <= row < len(self.entries):
             return self.entries[row]
         return None
+
+    def entry_for_index(
+        self, index: QModelIndex | QPersistentModelIndex
+    ) -> ImageEntry | None:
+        if not index.isValid():
+            return None
+        value = index.data(self.EntryRole)
+        return value if isinstance(value, ImageEntry) else None
+
+    def row_for_index(
+        self, index: QModelIndex | QPersistentModelIndex
+    ) -> int | None:
+        entry = self.entry_for_index(index)
+        if entry is None:
+            return None
+        return self.row_for_image(entry.image_path)
+
+    def index_for_row(self, row: int) -> QModelIndex:
+        if not 0 <= row < len(self._image_items):
+            return QModelIndex()
+        return self.indexFromItem(self._image_items[row])
 
     def row_for_image(self, image_path: Path) -> int | None:
         target = str(image_path.absolute()).casefold()
@@ -115,74 +147,29 @@ class ImageCatalogModel(QAbstractListModel):
         return row - 1 if 0 < row < len(self.entries) else None
 
     def notify_entry_changed(self, row: int) -> None:
-        if not 0 <= row < len(self.entries):
+        entry = self.entry(row)
+        if entry is None or not 0 <= row < len(self._image_items):
             return
-        index = self.index(row, 0)
-        self.dataChanged.emit(
-            index,
-            index,
-            [
-                Qt.ItemDataRole.DisplayRole,
-                Qt.ItemDataRole.ToolTipRole,
-                self.EntryRole,
-            ],
-        )
+        self._update_image_item(self._image_items[row], entry, self.groups[row])
 
-
-class GroupedImageDelegate(QStyledItemDelegate):
-    header_height = 26
-
-    @override
-    def sizeHint(
-        self,
-        option: QStyleOptionViewItem,
-        index: QModelIndex | QPersistentModelIndex,
-    ) -> QSize:
-        size = super().sizeHint(option, index)
-        if self._is_group_start(index):
-            size.setHeight(size.height() + self.header_height)
-        return size
-
-    @override
-    def paint(
-        self,
-        painter: QPainter,
-        option: QStyleOptionViewItem,
-        index: QModelIndex | QPersistentModelIndex,
+    def _update_image_item(
+        self, item: QStandardItem, entry: ImageEntry, group: str
     ) -> None:
-        if self._is_group_start(index):
-            header_rect = QRect(
-                option.rect.left(),
-                option.rect.top(),
-                option.rect.width(),
-                self.header_height,
-            )
-            painter.save()
-            painter.fillRect(header_rect, QColor("#eef2f6"))
-            font = QFont(option.font)
-            font.setBold(True)
-            painter.setFont(font)
-            painter.setPen(QColor("#344054"))
-            painter.drawText(
-                header_rect.adjusted(8, 0, -8, 0),
-                Qt.AlignmentFlag.AlignVCenter,
-                str(index.data(ImageCatalogModel.GroupRole)),
-            )
-            painter.restore()
-            option = QStyleOptionViewItem(option)
-            option.rect = option.rect.adjusted(0, self.header_height, 0, 0)
-        super().paint(painter, option, index)
+        suffix = " [read-only]" if not entry.editable else ""
+        item.setText(f"{entry.image_path.name}  ({len(entry.tags)}){suffix}")
+        details = [str(entry.image_path), f"Tags: {entry.tag_path.name}"]
+        details.extend(entry.warnings)
+        if entry.error:
+            details.append(entry.error)
+            item.setForeground(QColor("#b42318"))
+        else:
+            item.setData(None, Qt.ItemDataRole.ForegroundRole)
+        item.setToolTip("\n".join(details))
+        item.setData(entry, self.EntryRole)
+        item.setData(group, self.GroupRole)
 
-    def _is_group_start(
-        self, index: QModelIndex | QPersistentModelIndex
-    ) -> bool:
-        if index.row() == 0:
-            return True
-        model = index.model()
-        if model is None:
-            return False
-        previous = model.index(index.row() - 1, index.column())
-        return bool(
-            index.data(ImageCatalogModel.GroupRole)
-            != previous.data(ImageCatalogModel.GroupRole)
-        )
+
+def _folder_ancestors(path: Path) -> list[Path]:
+    if path == Path("."):
+        return []
+    return [Path(*path.parts[:length]) for length in range(1, len(path.parts) + 1)]

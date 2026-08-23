@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast, override
 
 from PySide6.QtCore import QEvent, QObject, Qt
@@ -15,6 +16,9 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSplitter,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QTreeWidgetItemIterator,
     QVBoxLayout,
     QWidget,
 )
@@ -24,6 +28,8 @@ from .domain import (
     TagOperation,
     TraversalItem,
     TraversalSession,
+    filter_traversal_entries,
+    parse_requested_tags,
     parse_tags,
 )
 from .preview import ImageView, PreviewLoader
@@ -35,6 +41,12 @@ from .storage import (
 )
 
 
+def _folder_ancestors(path: Path) -> list[Path]:
+    if path == Path("."):
+        return []
+    return [Path(*path.parts[:length]) for length in range(1, len(path.parts) + 1)]
+
+
 class TraversalDialog(QDialog):
     def __init__(
         self,
@@ -42,13 +54,25 @@ class TraversalDialog(QDialog):
         operation: TagOperation,
         requested_tags: list[str] | None = None,
         parent=None,
+        *,
+        root_directory: Path | None = None,
     ) -> None:
         super().__init__(parent)
-        self.session = TraversalSession(entries, operation, requested_tags or [])
+        self._entries = entries
+        self._operation = operation
+        self._requested_tags = requested_tags or []
+        self._root_directory = root_directory
+        self._session: TraversalSession | None = (
+            TraversalSession(entries, operation, self._requested_tags)
+            if root_directory is None
+            else None
+        )
         self.commit_result: BatchCommitResult | None = None
         self._allow_close = False
         self._populating_choices = False
+        self._updating_folder_checks = False
         self._shortcuts: list[QShortcut] = []
+        self._started = root_directory is None
 
         title = {
             TagOperation.ADD: "Add Tags Across Folder",
@@ -138,14 +162,219 @@ class TraversalDialog(QDialog):
         button_layout.addWidget(self.apply_button)
         button_layout.addWidget(self.finish_button)
 
+        self.folder_setup = QWidget()
+        folder_layout = QVBoxLayout(self.folder_setup)
+        folder_layout.setContentsMargins(0, 0, 0, 0)
+        folder_layout.addWidget(
+            QLabel(
+                "Check one or more folders whose images should be included. "
+                "Checking a folder also checks all of its subfolders."
+            )
+        )
+        self.folder_tree = QTreeWidget()
+        self.folder_tree.setHeaderLabel("Folder")
+        self.folder_tree.setSelectionMode(
+            QTreeWidget.SelectionMode.NoSelection
+        )
+        self.folder_tree.itemChanged.connect(self._folder_check_changed)
+        folder_layout.addWidget(self.folder_tree, 1)
+        self.tag_input_label = QLabel("Tags to apply")
+        folder_layout.addWidget(self.tag_input_label)
+        self.tag_input = QLineEdit()
+        self.tag_input.setPlaceholderText("Comma-separated tags")
+        self.tag_input.setClearButtonEnabled(True)
+        self.tag_input.textChanged.connect(self._update_folder_selection)
+        self.tag_input.returnPressed.connect(self._start_selected_folder)
+        folder_layout.addWidget(self.tag_input)
+        self.folder_selection_label = QLabel()
+        folder_layout.addWidget(self.folder_selection_label)
+        setup_buttons = QHBoxLayout()
+        self.cancel_setup_button = QPushButton("Cancel")
+        self.start_button = QPushButton("Start Traversal")
+        self.cancel_setup_button.clicked.connect(self.reject)
+        self.start_button.clicked.connect(self._start_selected_folder)
+        setup_buttons.addStretch(1)
+        setup_buttons.addWidget(self.cancel_setup_button)
+        setup_buttons.addWidget(self.start_button)
+        folder_layout.addLayout(setup_buttons)
+
+        self.traversal_widget = QWidget()
+        traversal_layout = QVBoxLayout(self.traversal_widget)
+        traversal_layout.setContentsMargins(0, 0, 0, 0)
+        traversal_layout.addWidget(self.progress_label)
+        traversal_layout.addWidget(self.path_label)
+        traversal_layout.addWidget(self.shortcut_hint)
+        traversal_layout.addWidget(splitter, 1)
+        traversal_layout.addLayout(button_layout)
+
         layout = QVBoxLayout(self)
-        layout.addWidget(self.progress_label)
-        layout.addWidget(self.path_label)
-        layout.addWidget(self.shortcut_hint)
-        layout.addWidget(splitter, 1)
-        layout.addLayout(button_layout)
+        layout.addWidget(self.folder_setup, 1)
+        layout.addWidget(self.traversal_widget, 1)
 
         self._create_shortcuts()
+        if root_directory is None:
+            self.folder_setup.hide()
+            self._load_current()
+        else:
+            self.tag_input.setText(", ".join(self._requested_tags))
+            self._populate_folder_tree(root_directory)
+            self.traversal_widget.hide()
+
+    @property
+    def session(self) -> TraversalSession:
+        if self._session is None:
+            raise RuntimeError("Traversal has not started.")
+        return self._session
+
+    def _populate_folder_tree(self, root_directory: Path) -> None:
+        self.folder_tree.clear()
+        root_label = root_directory.name or str(root_directory)
+        root_item = QTreeWidgetItem([root_label])
+        root_item.setFlags(root_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        root_item.setData(0, Qt.ItemDataRole.UserRole, str(root_directory))
+        root_item.setCheckState(0, Qt.CheckState.Unchecked)
+        self.folder_tree.addTopLevelItem(root_item)
+        items: dict[Path, QTreeWidgetItem] = {Path("."): root_item}
+        relative_folders = {
+            ancestor
+            for entry in self._entries
+            for ancestor in _folder_ancestors(
+                entry.image_path.parent.relative_to(root_directory)
+            )
+        }
+        for relative_folder in sorted(
+            relative_folders,
+            key=lambda path: (
+                len(path.parts),
+                tuple(part.casefold() for part in path.parts),
+                path.as_posix(),
+            ),
+        ):
+            item = QTreeWidgetItem([relative_folder.name])
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setData(
+                0,
+                Qt.ItemDataRole.UserRole,
+                str(root_directory / relative_folder),
+            )
+            item.setCheckState(0, Qt.CheckState.Unchecked)
+            items[relative_folder.parent].addChild(item)
+            items[relative_folder] = item
+        self.folder_tree.expandAll()
+        root_item.setCheckState(0, Qt.CheckState.Checked)
+
+    def _folder_check_changed(
+        self, item: QTreeWidgetItem, column: int
+    ) -> None:
+        if self._updating_folder_checks or column != 0:
+            return
+        self._updating_folder_checks = True
+        try:
+            state = item.checkState(0)
+            if state in {Qt.CheckState.Checked, Qt.CheckState.Unchecked}:
+                self._set_descendant_check_state(item, state)
+            self._update_ancestor_check_states(item.parent())
+        finally:
+            self._updating_folder_checks = False
+        self._update_folder_selection()
+
+    def _set_descendant_check_state(
+        self, item: QTreeWidgetItem, state: Qt.CheckState
+    ) -> None:
+        for index in range(item.childCount()):
+            child = item.child(index)
+            if child is None:
+                continue
+            child.setCheckState(0, state)
+            self._set_descendant_check_state(child, state)
+
+    def _update_ancestor_check_states(
+        self, item: QTreeWidgetItem | None
+    ) -> None:
+        while item is not None:
+            child_states = [
+                child.checkState(0)
+                for index in range(item.childCount())
+                if (child := item.child(index)) is not None
+            ]
+            if child_states and all(
+                state == Qt.CheckState.Unchecked for state in child_states
+            ):
+                state = Qt.CheckState.Unchecked
+            else:
+                state = Qt.CheckState.PartiallyChecked
+            item.setCheckState(0, state)
+            item = item.parent()
+
+    def _checked_folders(self) -> list[Path]:
+        folders: list[Path] = []
+        iterator = QTreeWidgetItemIterator(self.folder_tree)
+        while iterator.value() is not None:
+            item = iterator.value()
+            if item.checkState(0) == Qt.CheckState.Checked:
+                value = item.data(0, Qt.ItemDataRole.UserRole)
+                if isinstance(value, str):
+                    folders.append(Path(value))
+            iterator += 1
+        return folders
+
+    def _entries_in_checked_folders(self) -> list[ImageEntry]:
+        folders = self._checked_folders()
+        return [
+            entry
+            for entry in self._entries
+            if any(
+                entry.image_path.parent == folder
+                or folder in entry.image_path.parent.parents
+                for folder in folders
+            )
+        ]
+
+    def _update_folder_selection(self) -> None:
+        entries = self._entries_in_checked_folders()
+        requested: list[str] | None = None
+        try:
+            requested = parse_requested_tags(self.tag_input.text())
+        except ValueError:
+            pass
+        if requested is not None:
+            entries = filter_traversal_entries(
+                entries, self._operation, requested
+            )
+        self.folder_selection_label.setText(
+            f"{len(entries)} matching image(s) will be included."
+        )
+        self.start_button.setEnabled(bool(entries) and requested is not None)
+
+    def _start_selected_folder(self) -> None:
+        entries = self._entries_in_checked_folders()
+        if not entries:
+            return
+        try:
+            requested = parse_requested_tags(self.tag_input.text())
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Tags", str(exc))
+            self.tag_input.setFocus()
+            return
+        entries = filter_traversal_entries(entries, self._operation, requested)
+        if not entries:
+            QMessageBox.information(
+                self,
+                "Nothing to Traverse",
+                "No images in the selected folder match this operation.",
+            )
+            return
+        try:
+            self._session = TraversalSession(entries, self._operation, requested)
+        except ValueError as exc:
+            QMessageBox.information(self, "Nothing to Traverse", str(exc))
+            return
+        self._requested_tags = requested
+        self._started = True
+        for shortcut in self._shortcuts:
+            shortcut.setEnabled(True)
+        self.folder_setup.hide()
+        self.traversal_widget.show()
         self._load_current()
 
     @override
@@ -190,6 +419,7 @@ class TraversalDialog(QDialog):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             shortcut.activated.connect(callback)
+            shortcut.setEnabled(self._started)
             self._shortcuts.append(shortcut)
 
     def _preview_loaded(self, image, error: str) -> None:
@@ -415,6 +645,8 @@ class TraversalDialog(QDialog):
         self.accept()
 
     def _confirm_discard(self) -> bool:
+        if not self._started:
+            return True
         if not self.session.has_changes:
             return True
         answer = QMessageBox.question(

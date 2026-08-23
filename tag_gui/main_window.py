@@ -26,10 +26,8 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QFileDialog,
     QGridLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
-    QListView,
     QListWidget,
     QMainWindow,
     QMessageBox,
@@ -39,16 +37,16 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStyle,
     QToolBar,
+    QTreeView,
     QVBoxLayout,
     QWidget,
 )
 
-from .catalog import GroupedImageDelegate, ImageCatalogModel
+from .catalog import ImageCatalogModel
 from .domain import (
     ImageEntry,
     TagOperation,
     apply_tag_operation,
-    filter_traversal_entries,
     normalize_tags,
     parse_requested_tags,
     tag_matches_pattern,
@@ -76,11 +74,13 @@ class MainWindow(QMainWindow):
         self.directory: Path | None = None
 
         self.catalog = ImageCatalogModel(self)
-        self.image_list = QListView()
+        self.image_list = QTreeView()
         self.image_list.setModel(self.catalog)
-        self.image_list.setSelectionMode(QListView.SelectionMode.SingleSelection)
+        self.image_list.setSelectionMode(QTreeView.SelectionMode.SingleSelection)
         self.image_list.setMinimumWidth(220)
-        self.image_list.setItemDelegate(GroupedImageDelegate(self.image_list))
+        self.image_list.setHeaderHidden(True)
+        self.image_list.setUniformRowHeights(True)
+        self.image_list.setAnimated(True)
         self.image_list.selectionModel().currentChanged.connect(
             self._current_image_changed
         )
@@ -388,6 +388,7 @@ class MainWindow(QMainWindow):
         self._update_window_title()
         self.settings.setValue("last_directory", str(directory))
         self.catalog.set_entries(result.entries, directory)
+        self.image_list.expandAll()
 
         row = (
             self.catalog.row_for_image(preferred_image)
@@ -421,7 +422,13 @@ class MainWindow(QMainWindow):
     def _select_row(self, row: int) -> None:
         if self.catalog.entry(row) is None:
             return
-        index = self.catalog.index(row, 0)
+        index = self.catalog.index_for_row(row)
+        if not index.isValid():
+            return
+        parent = index.parent()
+        while parent.isValid():
+            self.image_list.expand(parent)
+            parent = parent.parent()
         self.image_list.setCurrentIndex(index)
         self.image_list.selectionModel().select(
             index,
@@ -435,7 +442,9 @@ class MainWindow(QMainWindow):
             self._select_row(row)
 
     def _move_selection(self, offset: int) -> None:
-        row = self.image_list.currentIndex().row()
+        row = self.catalog.row_for_index(self.image_list.currentIndex())
+        if row is None:
+            return
         target = (
             self.catalog.next_image_row(row)
             if offset > 0
@@ -444,7 +453,7 @@ class MainWindow(QMainWindow):
         self._select_optional_row(target)
 
     def _current_entry(self) -> ImageEntry | None:
-        return self.catalog.entry(self.image_list.currentIndex().row())
+        return self.catalog.entry_for_index(self.image_list.currentIndex())
 
     def _focus_tag_search(self) -> None:
         self.search_input.setFocus()
@@ -480,7 +489,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Open a folder before searching tags.", 4000)
             return
 
-        current_row = self.image_list.currentIndex().row()
+        current_row = self.catalog.row_for_index(self.image_list.currentIndex())
+        if current_row is None:
+            current_row = -1
         current_entry = self.catalog.entry(current_row)
         current_tag_row = self.tag_list.currentRow()
         selected_tag = self.tag_list.currentItem()
@@ -568,7 +579,7 @@ class MainWindow(QMainWindow):
                 return
 
     def _current_image_changed(self, current, _previous) -> None:
-        entry = self.catalog.entry(current.row())
+        entry = self.catalog.entry_for_index(current)
         self.tag_list.clear()
         if entry is None:
             self.preview_loader.clear()
@@ -577,12 +588,15 @@ class MainWindow(QMainWindow):
             self._update_action_states()
             return
 
+        row = self.catalog.row_for_index(current)
+        if row is None:
+            return
         self.tag_list.addItems(entry.tags)
         self.image_view.clear_image("Loading image...")
         self._set_image_info(entry)
         self.preview_loader.load(entry.image_path)
         details = [
-            f"{self.catalog.image_position(current.row())}/{self.catalog.image_count}",
+            f"{self.catalog.image_position(row)}/{self.catalog.image_count}",
             entry.image_path.name,
             entry.tag_path.name,
         ]
@@ -720,9 +734,9 @@ class MainWindow(QMainWindow):
     def _apply_current_operation(
         self, operation: TagOperation, requested_tags: list[str]
     ) -> None:
-        row = self.image_list.currentIndex().row()
-        entry = self.catalog.entry(row)
-        if entry is None or not entry.editable:
+        row = self.catalog.row_for_index(self.image_list.currentIndex())
+        entry = self.catalog.entry(row) if row is not None else None
+        if row is None or entry is None or not entry.editable:
             return
 
         result = apply_tag_operation(entry.tags, requested_tags, operation)
@@ -755,31 +769,13 @@ class MainWindow(QMainWindow):
             )
             return
 
-        text, accepted = QInputDialog.getText(
-            self,
-            self.folder_tag_actions[operation].text().replace("...", ""),
-            "Comma-separated tags:",
-        )
-        if not accepted:
-            return
-        try:
-            requested = parse_requested_tags(text)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Invalid Tags", str(exc))
-            return
-
-        entries = filter_traversal_entries(editable_entries, operation, requested)
-        if not entries:
-            message = {
-                TagOperation.ADD: "Every editable image already has all specified tags.",
-                TagOperation.DELETE: "No editable image has any specified tag.",
-                TagOperation.TOGGLE: "No editable images are available for toggling.",
-            }[operation]
-            QMessageBox.information(self, "Nothing to Traverse", message)
-            return
-
         current = self._current_entry()
-        dialog = TraversalDialog(entries, operation, requested, self)
+        dialog = TraversalDialog(
+            editable_entries,
+            operation,
+            parent=self,
+            root_directory=self.directory,
+        )
         if dialog.exec() == TraversalDialog.DialogCode.Accepted and self.directory:
             self._load_directory(
                 self.directory,
@@ -872,9 +868,9 @@ class MainWindow(QMainWindow):
 
     def _update_action_states(self) -> None:
         count = self.catalog.image_count
-        row = self.image_list.currentIndex().row()
-        has_current = 0 <= row < count
-        current = self.catalog.entry(row)
+        row = self.catalog.row_for_index(self.image_list.currentIndex())
+        has_current = row is not None
+        current = self.catalog.entry(row) if row is not None else None
         editable = current is not None and current.editable
 
         has_directory = self.directory is not None
@@ -883,8 +879,10 @@ class MainWindow(QMainWindow):
         self.search_input.setEnabled(count > 0)
         self.focus_search_action.setEnabled(count > 0)
         self.global_search_action.setEnabled(count > 0)
-        has_previous = has_current and self.catalog.previous_image_row(row) is not None
-        has_next = has_current and self.catalog.next_image_row(row) is not None
+        has_previous = (
+            row is not None and self.catalog.previous_image_row(row) is not None
+        )
+        has_next = row is not None and self.catalog.next_image_row(row) is not None
         self.first_action.setEnabled(has_previous)
         self.previous_action.setEnabled(has_previous)
         self.next_action.setEnabled(has_next)
