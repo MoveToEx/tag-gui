@@ -25,7 +25,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QFileDialog,
-    QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -116,6 +116,7 @@ class MainWindow(QMainWindow):
         )
         self.tag_input = QLineEdit()
         self.tag_input.setPlaceholderText("Comma-separated tags")
+        self.tag_input.setClearButtonEnabled(True)
         self.tag_input.returnPressed.connect(self._add_current_tags)
 
         self.search_input = QLineEdit()
@@ -129,26 +130,26 @@ class MainWindow(QMainWindow):
         )
         self.search_input.installEventFilter(self)
 
-        add_button = QPushButton("Add")
-        toggle_button = QPushButton("Toggle")
+        self.add_tag_button = QPushButton("+")
+        self.add_tag_button.setToolTip("Add these tags to the current image")
+        self.add_tag_button.setFixedWidth(34)
         delete_button = QPushButton("Delete Selected")
-        add_button.clicked.connect(self._add_current_tags)
-        toggle_button.clicked.connect(self._toggle_current_tags)
+        self.add_tag_button.clicked.connect(self._add_current_tags)
         delete_button.clicked.connect(self._delete_selected_tags)
-        self.inline_buttons = [add_button, toggle_button, delete_button]
+        self.inline_buttons = [self.add_tag_button, delete_button]
 
-        input_buttons = QGridLayout()
-        input_buttons.addWidget(add_button, 0, 0)
-        input_buttons.addWidget(toggle_button, 0, 1)
-        input_buttons.addWidget(delete_button, 1, 0, 1, 2)
+        input_buttons = QHBoxLayout()
+        input_buttons.setContentsMargins(0, 0, 0, 0)
+        input_buttons.addWidget(self.tag_input, 1)
+        input_buttons.addWidget(self.add_tag_button)
 
         tag_panel = QWidget()
         tag_layout = QVBoxLayout(tag_panel)
         tag_layout.setContentsMargins(8, 0, 0, 0)
         tag_layout.addWidget(QLabel("Current tags"))
         tag_layout.addWidget(self.tag_list, 1)
-        tag_layout.addWidget(self.tag_input)
         tag_layout.addLayout(input_buttons)
+        tag_layout.addWidget(delete_button)
         tag_panel.setMinimumWidth(280)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -687,11 +688,6 @@ class MainWindow(QMainWindow):
         requested = self._requested_from_input()
         if requested is not None:
             self._apply_current_operation(TagOperation.ADD, requested)
-
-    def _toggle_current_tags(self) -> None:
-        requested = self._requested_from_input()
-        if requested is not None:
-            self._apply_current_operation(TagOperation.TOGGLE, requested)
 
     def _delete_selected_tags(self) -> None:
         requested = [item.text() for item in self.tag_list.selectedItems()]

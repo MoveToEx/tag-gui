@@ -35,6 +35,8 @@ def test_main_window_loads_folder_and_edits_current_tags(qtbot, tmp_path: Path) 
     window._load_directory(tmp_path, show_issues=False)
 
     assert window.catalog.rowCount() == 1
+    assert window.add_tag_button.text() == "+"
+    assert window.add_tag_button.width() == 34
     assert window.image_list.currentIndex().row() == 0
     assert [window.tag_list.item(i).text() for i in range(window.tag_list.count())] == [
         "dog",
