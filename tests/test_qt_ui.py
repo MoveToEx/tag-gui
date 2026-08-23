@@ -776,10 +776,14 @@ def test_traversal_folder_tree_combines_checked_subtrees(
         root_directory=tmp_path,
     )
     qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
 
     assert dialog.folder_setup.isVisibleTo(dialog)
     assert not dialog.traversal_widget.isVisibleTo(dialog)
     assert dialog.tag_input.text() == "dog"
+    assert dialog.focusWidget() is dialog.tag_input
+    assert dialog.tag_input.selectedText() == "dog"
     root_item = dialog.folder_tree.topLevelItem(0)
     assert root_item is not None
     assert root_item.text(0) == tmp_path.name

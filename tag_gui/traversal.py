@@ -228,6 +228,8 @@ class TraversalDialog(QDialog):
             self.tag_input.setText(", ".join(self._requested_tags))
             self._populate_folder_tree(root_directory)
             self.traversal_widget.hide()
+            self.tag_input.setFocus()
+            self.tag_input.selectAll()
 
     @property
     def session(self) -> TraversalSession:
