@@ -205,6 +205,10 @@ class TraversalSession:
         self.current_index = 0
         self.reviewed: set[int] = set()
         self.selections: dict[int, tuple[str, ...]] = {}
+        self.extra_tags: dict[int, tuple[str, ...]] = {}
+        self.applied_inputs: dict[
+            int, tuple[tuple[str, ...], tuple[str, ...]]
+        ] = {}
         self.staged: dict[int, tuple[str, ...]] = {}
 
     @property
@@ -239,6 +243,42 @@ class TraversalSession:
             return [tag for tag in self.requested_tags if tag in current]
         return self.eligible_for(target)
 
+    def extra_tags_for(self, index: int | None = None) -> list[str]:
+        target = self.current_index if index is None else index
+        return list(self.extra_tags.get(target, ()))
+
+    def set_ephemeral(
+        self,
+        selected_tags: Sequence[str],
+        extra_tags: Sequence[str] = (),
+        index: int | None = None,
+    ) -> None:
+        target = self.current_index if index is None else index
+        eligible = set(self.eligible_for(target))
+        selected = tuple(
+            tag for tag in unique_tags(selected_tags) if tag in eligible
+        )
+        extras = tuple(
+            unique_tags(extra_tags)
+            if self.operation in {TagOperation.ADD, TagOperation.DELETE}
+            else ()
+        )
+        self.selections[target] = selected
+        self.extra_tags[target] = extras
+        applied = self.applied_inputs.get(target)
+        if applied is None:
+            return
+        if applied == (selected, extras):
+            result = self.result_for(selected, extras, target)
+            self.reviewed.add(target)
+            if tuple(result) == self.items[target].original_tags:
+                self.staged.pop(target, None)
+            else:
+                self.staged[target] = tuple(result)
+        else:
+            self.reviewed.discard(target)
+            self.staged.pop(target, None)
+
     def result_for(
         self,
         selected_tags: Sequence[str],
@@ -266,8 +306,9 @@ class TraversalSession:
         )
 
         result = self.result_for(selected, extras)
+        self.set_ephemeral(selected, extras)
+        self.applied_inputs[self.current_index] = (selected, extras)
         self.reviewed.add(self.current_index)
-        self.selections[self.current_index] = tuple(selected)
         if tuple(result) == self.current_item.original_tags:
             self.staged.pop(self.current_index, None)
         else:
@@ -275,8 +316,9 @@ class TraversalSession:
         return result
 
     def skip_current(self) -> None:
+        self.set_ephemeral((), ())
+        self.applied_inputs[self.current_index] = ((), ())
         self.reviewed.add(self.current_index)
-        self.selections[self.current_index] = ()
         self.staged.pop(self.current_index, None)
 
     def move_next(self) -> bool:

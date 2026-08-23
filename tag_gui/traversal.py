@@ -116,9 +116,20 @@ class TraversalDialog(QDialog):
             "Comma-separated tags for this image only"
         )
         self.temporary_input.setClearButtonEnabled(True)
-        self.temporary_input.textChanged.connect(self._update_result_preview)
+        self.temporary_input.textChanged.connect(self._update_temporary_button)
+        self.temporary_input.returnPressed.connect(self._append_temporary_tags)
+        self.temporary_add_button = QPushButton("+")
+        self.temporary_add_button.setToolTip(
+            "Append these tags to the current image operation"
+        )
+        self.temporary_add_button.setFixedWidth(34)
+        self.temporary_add_button.clicked.connect(self._append_temporary_tags)
+        temporary_layout = QHBoxLayout()
+        temporary_layout.setContentsMargins(0, 0, 0, 0)
+        temporary_layout.addWidget(self.temporary_input, 1)
+        temporary_layout.addWidget(self.temporary_add_button)
         detail_layout.addWidget(self.temporary_label)
-        detail_layout.addWidget(self.temporary_input)
+        detail_layout.addLayout(temporary_layout)
 
         detail_layout.addWidget(QLabel("Result"))
         self.result_tags = QPlainTextEdit()
@@ -132,8 +143,7 @@ class TraversalDialog(QDialog):
         splitter.setSizes([620, 340])
 
         self.back_button = QPushButton("Back")
-        self.skip_button = QPushButton("Skip & Next")
-        self.apply_button = QPushButton("Apply & Next")
+        self.next_button = QPushButton("Next")
         self.apply_all_button = QPushButton("Apply All to All Images")
         self.apply_all_button.setToolTip(
             "Apply every available option to every image in this traversal"
@@ -147,8 +157,7 @@ class TraversalDialog(QDialog):
         self.finish_button = QPushButton("Finish")
         self.stop_button = QPushButton("Stop")
         self.back_button.clicked.connect(self._back)
-        self.skip_button.clicked.connect(self._skip)
-        self.apply_button.clicked.connect(self._apply)
+        self.next_button.clicked.connect(self._next)
         self.apply_all_button.clicked.connect(self._apply_all)
         self.finish_button.clicked.connect(self._finish)
         self.stop_button.clicked.connect(self.reject)
@@ -158,8 +167,8 @@ class TraversalDialog(QDialog):
         button_layout.addWidget(self.apply_all_button)
         button_layout.addStretch(1)
         button_layout.addWidget(self.back_button)
-        button_layout.addWidget(self.skip_button)
-        button_layout.addWidget(self.apply_button)
+        button_layout.addWidget(self.next_button)
+        self.skip_button = self.next_button
         button_layout.addWidget(self.finish_button)
 
         self.folder_setup = QWidget()
@@ -461,7 +470,9 @@ class TraversalDialog(QDialog):
         }
         self.temporary_label.setVisible(show_temporary)
         self.temporary_input.setVisible(show_temporary)
+        self.temporary_add_button.setVisible(show_temporary)
         self._populating_choices = False
+        self._update_temporary_button()
         self._update_result_preview()
         self._update_buttons()
 
@@ -473,9 +484,21 @@ class TraversalDialog(QDialog):
         ]
 
     def _temporary_tags(self) -> list[str]:
-        if self.session.operation not in {TagOperation.ADD, TagOperation.DELETE}:
-            return []
-        return parse_tags(self.temporary_input.text())
+        return self.session.extra_tags_for()
+
+    def _update_temporary_button(self, *_args) -> None:
+        self.temporary_add_button.setEnabled(
+            bool(parse_tags(self.temporary_input.text()))
+        )
+
+    def _append_temporary_tags(self) -> None:
+        entered = parse_tags(self.temporary_input.text())
+        if not entered:
+            return
+        extras = [*self.session.extra_tags_for(), *entered]
+        self.session.apply_current(self._checked_tags(), extras)
+        self.temporary_input.clear()
+        self._update_result_preview()
 
     def _move_tag_selection(self, offset: int) -> None:
         if not self.choices.isVisible() or not self.choices.count():
@@ -523,50 +546,24 @@ class TraversalDialog(QDialog):
         self._update_result_preview()
 
     def _advance_from_keyboard(self) -> None:
-        if self.apply_button.isEnabled():
-            self._apply()
-        else:
-            self._skip()
+        self._next()
 
     def _update_result_preview(self, *_args) -> None:
         if self._populating_choices:
             return
         selected = self._checked_tags()
         extras = self._temporary_tags()
-        prior = self.session.selections.get(self.session.current_index)
-        staged = self.session.staged.get(self.session.current_index)
-        if staged is not None and prior == tuple(selected) and not extras:
-            result = list(staged)
-        else:
-            result = self.session.result_for(selected, extras)
+        result = self.session.apply_current(selected, extras)
         self.result_tags.setPlainText(", ".join(result) or "(none)")
-        self.apply_button.setEnabled(
-            bool(selected) or bool(extras)
-        )
-        if prior is not None and tuple(selected) == prior and not extras:
-            self.session.reviewed.add(self.session.current_index)
-        elif prior is not None:
-            self.session.reviewed.discard(self.session.current_index)
         self._update_buttons()
 
     def _update_buttons(self) -> None:
         at_last = self.session.at_last
         self.back_button.setEnabled(not self.session.at_first)
-        self.apply_button.setText("Apply" if at_last else "Apply & Next")
-        self.skip_button.setText("Skip" if at_last else "Skip & Next")
-        self.finish_button.setEnabled(
-            at_last and self.session.current_index in self.session.reviewed
-        )
+        self.next_button.setEnabled(not at_last)
+        self.finish_button.setEnabled(True)
 
-    def _apply(self) -> None:
-        self.session.apply_current(self._checked_tags(), self._temporary_tags())
-        if self.session.move_next():
-            self._load_current()
-        else:
-            self._update_buttons()
-
-    def _skip(self) -> None:
-        self.session.skip_current()
+    def _next(self) -> None:
         if self.session.move_next():
             self._load_current()
         else:
@@ -577,8 +574,6 @@ class TraversalDialog(QDialog):
             self._load_current()
 
     def _finish(self) -> None:
-        if self.session.current_index not in self.session.reviewed:
-            return
         self._commit_changes(self.session.staged_changes())
 
     def _apply_all(self) -> None:

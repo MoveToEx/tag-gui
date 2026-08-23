@@ -532,7 +532,6 @@ def test_traversal_does_not_write_until_finish(qtbot, tmp_path: Path) -> None:
 
     assert dialog.choices.item(0).checkState() == Qt.CheckState.Unchecked
     dialog.choices.item(0).setCheckState(Qt.CheckState.Checked)
-    dialog._apply()
     assert tag_path.read_bytes() == b"cat\n"
     assert dialog.finish_button.isEnabled()
 
@@ -641,8 +640,10 @@ def test_traversal_keyboard_navigation_selects_toggles_and_moves(qtbot, tmp_path
 
     qtbot.keyClick(dialog.choices, Qt.Key.Key_Return)
     assert dialog.session.current_index == 1
+    assert dialog.session.staged[0] == ("cat", "night")
     qtbot.keyClick(dialog.choices, Qt.Key.Key_Left)
     assert dialog.session.current_index == 0
+    assert dialog.choices.item(1).checkState() == Qt.CheckState.Checked
     qtbot.keyClick(dialog.choices, Qt.Key.Key_Right)
     assert dialog.session.current_index == 1
 
@@ -678,7 +679,9 @@ def test_traversal_a_shortcut_toggles_all_options(qtbot, tmp_path: Path) -> None
     )
 
 
-def test_traversal_temporary_extra_tags_clear_on_image_switch(qtbot, tmp_path: Path) -> None:
+def test_traversal_temporary_input_is_consumed_or_cleared_on_navigation(
+    qtbot, tmp_path: Path
+) -> None:
     entries: list[ImageEntry] = []
     for name in ["first", "second"]:
         image_path = tmp_path / f"{name}.png"
@@ -692,13 +695,56 @@ def test_traversal_temporary_extra_tags_clear_on_image_switch(qtbot, tmp_path: P
     assert not dialog.temporary_input.isHidden()
 
     dialog.temporary_input.setText("temporary, image_only")
-    assert dialog.apply_button.isEnabled()
+    assert dialog.temporary_add_button.isEnabled()
+    assert dialog.result_tags.toPlainText() == "cat"
+    dialog.temporary_add_button.click()
+    assert dialog.temporary_input.text() == ""
     assert dialog.result_tags.toPlainText() == "cat, image_only, temporary"
-    dialog._apply()
+    assert dialog.session.extra_tags_for() == ["temporary", "image_only"]
+    dialog.choices.item(0).setCheckState(Qt.CheckState.Checked)
+    dialog.temporary_input.setText("discard_me")
+    dialog._next()
 
     assert dialog.session.current_index == 1
     assert dialog.temporary_input.text() == ""
-    assert dialog.session.staged[0] == ("cat", "image_only", "temporary")
+    assert dialog.session.staged[0] == (
+        "base",
+        "cat",
+        "image_only",
+        "temporary",
+    )
+    dialog._back()
+    assert dialog.temporary_input.text() == ""
+    assert dialog.choices.item(0).checkState() == Qt.CheckState.Checked
+    assert dialog.session.extra_tags_for() == ["temporary", "image_only"]
+
+
+def test_traversal_finish_early_commits_applied_and_skips_remaining(
+    qtbot, tmp_path: Path
+) -> None:
+    entries: list[ImageEntry] = []
+    for name in ["first", "second", "third"]:
+        image_path = tmp_path / f"{name}.png"
+        tag_path = tmp_path / f"{name}.txt"
+        create_png(image_path)
+        tag_path.write_bytes(b"cat\n")
+        entries.append(ImageEntry(image_path, tag_path, ["cat"], b"cat\n"))
+
+    dialog = TraversalDialog(entries, TagOperation.ADD, ["dog"])
+    qtbot.addWidget(dialog)
+    assert dialog.finish_button.isEnabled()
+    assert dialog.next_button.text() == "Next"
+
+    dialog.choices.item(0).setCheckState(Qt.CheckState.Checked)
+    assert dialog.session.current_index == 0
+    dialog._next()
+    assert dialog.session.current_index == 1
+    assert dialog.finish_button.isEnabled()
+    dialog._finish()
+
+    assert (tmp_path / "first.txt").read_text(encoding="utf-8") == "cat, dog\n"
+    assert (tmp_path / "second.txt").read_text(encoding="utf-8") == "cat\n"
+    assert (tmp_path / "third.txt").read_text(encoding="utf-8") == "cat\n"
 
 
 def test_traversal_folder_tree_combines_checked_subtrees(
