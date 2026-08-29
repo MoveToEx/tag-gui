@@ -39,6 +39,9 @@ class PreviewLoader(QObject):
     def clear(self) -> None:
         self._generation += 1
 
+    def wait_for_done(self) -> bool:
+        return self._pool.waitForDone()
+
     def load(self, path: Path) -> None:
         self._generation += 1
         worker = _PreviewWorker(self._generation, path)

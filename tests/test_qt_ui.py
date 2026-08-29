@@ -13,6 +13,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QGuiApplication, QImage
 from PySide6.QtWidgets import QMessageBox
 
+import tag_gui.main_window as main_window_module
 from tag_gui.domain import ImageEntry, TagOperation
 from tag_gui.main_window import MainWindow
 from tag_gui.global_search import GlobalTagSearchDialog
@@ -70,6 +71,90 @@ def test_navigation_actions_stop_at_boundaries(qtbot, tmp_path: Path) -> None:
     assert window.image_list.currentIndex().row() == 1
     assert not window.next_action.isEnabled()
     assert window.previous_action.isEnabled()
+
+
+def test_image_context_delete_moves_image_and_tag_to_trash(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    for name in ["first", "second"]:
+        create_png(tmp_path / f"{name}.png")
+        (tmp_path / f"{name}.txt").write_text("cat\n", encoding="utf-8")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    moved: list[Path] = []
+
+    def fake_move_to_trash(path: Path) -> bool:
+        moved.append(path)
+        path.unlink()
+        return True
+
+    monkeypatch.setattr(main_window_module, "move_to_trash", fake_move_to_trash)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: QMessageBox.StandardButton.Yes,
+    )
+
+    assert (
+        window.image_list.contextMenuPolicy()
+        == Qt.ContextMenuPolicy.CustomContextMenu
+    )
+    window._delete_current_image_and_tag()
+
+    assert moved == [tmp_path / "first.png", tmp_path / "first.txt"]
+    assert not (tmp_path / "first.png").exists()
+    assert not (tmp_path / "first.txt").exists()
+    assert window.catalog.image_count == 1
+    current = window._current_entry()
+    assert current is not None
+    assert current.image_path == tmp_path / "second.png"
+
+
+def test_move_to_trash_uses_qfile_instance_api(monkeypatch, tmp_path: Path) -> None:
+    opened: list[str] = []
+
+    class FakeQFile:
+        def __init__(self, path: str) -> None:
+            opened.append(path)
+
+        def moveToTrash(self) -> bool:
+            return True
+
+    monkeypatch.setattr(main_window_module, "QFile", FakeQFile)
+    path = tmp_path / "sample.png"
+
+    assert main_window_module.move_to_trash(path)
+    assert opened == [str(path)]
+
+
+def test_image_context_delete_can_be_cancelled(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    image_path = tmp_path / "sample.png"
+    tag_path = tmp_path / "sample.txt"
+    create_png(image_path)
+    tag_path.write_text("cat\n", encoding="utf-8")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: QMessageBox.StandardButton.Cancel,
+    )
+    monkeypatch.setattr(
+        main_window_module,
+        "move_to_trash",
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError("cancelled deletion must not move files")
+        ),
+    )
+
+    window._delete_current_image_and_tag()
+
+    assert image_path.exists()
+    assert tag_path.exists()
 
 
 def test_image_list_groups_images_by_subfolder(qtbot, tmp_path: Path) -> None:

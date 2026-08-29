@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Callable
 from typing import cast, override
 
 from PySide6.QtCore import (
     QEvent,
+    QFile,
     QItemSelectionModel,
     QModelIndex,
     QObject,
@@ -64,6 +66,12 @@ from .storage import (
 from .traversal import TraversalDialog
 
 
+def move_to_trash(path: Path) -> bool:
+    trash_file = QFile(str(path))
+    move = cast(Callable[[], bool], trash_file.moveToTrash)
+    return move()
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -81,6 +89,12 @@ class MainWindow(QMainWindow):
         self.image_list.setHeaderHidden(True)
         self.image_list.setUniformRowHeights(True)
         self.image_list.setAnimated(True)
+        self.image_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.image_list.customContextMenuRequested.connect(
+            self._show_image_context_menu
+        )
         self.image_list.selectionModel().currentChanged.connect(
             self._current_image_changed
         )
@@ -455,6 +469,81 @@ class MainWindow(QMainWindow):
 
     def _current_entry(self) -> ImageEntry | None:
         return self.catalog.entry_for_index(self.image_list.currentIndex())
+
+    def _show_image_context_menu(self, position) -> None:
+        index = self.image_list.indexAt(position)
+        entry = self.catalog.entry_for_index(index)
+        if entry is None:
+            return
+
+        self.image_list.setCurrentIndex(index)
+        self.image_list.selectionModel().select(
+            index,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Rows,
+        )
+        delete_action = QAction("Delete Image and Tag...", self)
+        delete_action.triggered.connect(self._delete_current_image_and_tag)
+        menu = QMenu(self)
+        menu.addAction(delete_action)
+        menu.exec(self.image_list.viewport().mapToGlobal(position))
+
+    def _delete_current_image_and_tag(self) -> None:
+        row = self.catalog.row_for_index(self.image_list.currentIndex())
+        entry = self.catalog.entry(row) if row is not None else None
+        if row is None or entry is None or self.directory is None:
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Delete Image and Tag?",
+            "Move both files to the Trash?\n\n"
+            f"Image: {entry.image_path.name}\n"
+            f"Tag: {entry.tag_path.name}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        preferred = self.catalog.entry(row + 1)
+        if preferred is None:
+            preferred = self.catalog.entry(row - 1)
+        preferred_path = preferred.image_path if preferred is not None else None
+
+        self.preview_loader.clear()
+        self.preview_loader.wait_for_done()
+        moved: list[Path] = []
+        failures: list[str] = []
+        image_moved = move_to_trash(entry.image_path)
+        if image_moved:
+            moved.append(entry.image_path)
+            if entry.tag_path.exists():
+                tag_moved = move_to_trash(entry.tag_path)
+                if tag_moved:
+                    moved.append(entry.tag_path)
+                else:
+                    failures.append(f"Could not move {entry.tag_path.name} to Trash.")
+        else:
+            failures.append(f"Could not move {entry.image_path.name} to Trash.")
+
+        if moved:
+            self._load_directory(
+                self.directory,
+                preferred_image=preferred_path,
+                show_issues=False,
+            )
+        if failures:
+            QMessageBox.warning(
+                self,
+                "Could Not Delete All Files",
+                "\n".join(failures),
+            )
+        elif moved:
+            self.statusBar().showMessage(
+                f"Moved {entry.image_path.name} and {entry.tag_path.name} to Trash.",
+                4000,
+            )
 
     def _focus_tag_search(self) -> None:
         self.search_input.setFocus()
