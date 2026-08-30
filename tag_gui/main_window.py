@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 )
 
 from .catalog import ImageCatalogModel
+from .complex_filter import ComplexFilterDialog
 from .domain import (
     ImageEntry,
     TagOperation,
@@ -81,6 +82,7 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.settings = QSettings()
         self.directory: Path | None = None
+        self._complex_filter_dialog: ComplexFilterDialog | None = None
 
         self.catalog = ImageCatalogModel(self)
         self.image_list = QTreeView()
@@ -211,6 +213,10 @@ class MainWindow(QMainWindow):
         self.review_action.setShortcut(QKeySequence("Ctrl+R"))
         self.review_action.triggered.connect(self._open_review)
 
+        self.complex_filter_action = QAction("Complex Filter...", self)
+        self.complex_filter_action.setShortcut(QKeySequence("Ctrl+Alt+F"))
+        self.complex_filter_action.triggered.connect(self._open_complex_filter)
+
         self.first_action = QAction("First", self)
         self.previous_action = QAction(
             "Previous", self
@@ -287,6 +293,7 @@ class MainWindow(QMainWindow):
         tags_menu.addAction(self.focus_search_action)
         tags_menu.addAction(self.global_search_action)
         tags_menu.addAction(self.review_action)
+        tags_menu.addAction(self.complex_filter_action)
         tags_menu.addSeparator()
         for action in self.folder_tag_actions.values():
             tags_menu.addAction(action)
@@ -575,6 +582,31 @@ class MainWindow(QMainWindow):
                 preferred_image=current.image_path if current else None,
                 show_issues=False,
             )
+
+    def _open_complex_filter(self) -> None:
+        if not self.catalog.entries:
+            return
+        if self._complex_filter_dialog is not None:
+            self._complex_filter_dialog.show()
+            self._complex_filter_dialog.raise_()
+            self._complex_filter_dialog.activateWindow()
+            return
+
+        dialog = ComplexFilterDialog(
+            self.catalog.entries,
+            self,
+            root_directory=self.directory,
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.setWindowFlag(Qt.WindowType.Window, True)
+        dialog.setModal(False)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.destroyed.connect(self._complex_filter_destroyed)
+        self._complex_filter_dialog = dialog
+        dialog.show()
+
+    def _complex_filter_destroyed(self, _object: QObject) -> None:
+        self._complex_filter_dialog = None
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
@@ -987,6 +1019,7 @@ class MainWindow(QMainWindow):
         self.focus_search_action.setEnabled(count > 0)
         self.global_search_action.setEnabled(count > 0)
         self.review_action.setEnabled(count > 0 and any(entry.editable and entry.tags for entry in self.catalog.entries))
+        self.complex_filter_action.setEnabled(count > 0)
         has_previous = (
             row is not None and self.catalog.previous_image_row(row) is not None
         )

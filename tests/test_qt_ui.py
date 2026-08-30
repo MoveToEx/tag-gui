@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QGroupBox, QMessageBox
 
 import tag_gui.main_window as main_window_module
 from tag_gui.domain import ImageEntry, TagOperation
+from tag_gui.complex_filter import ComplexFilterDialog
 from tag_gui.main_window import MainWindow
 from tag_gui.global_search import GlobalTagSearchDialog
 from tag_gui.preview import PreviewLoader
@@ -432,6 +433,28 @@ def test_global_search_action_requires_an_open_folder(qtbot, tmp_path: Path) -> 
     window._load_directory(tmp_path, show_issues=False)
 
     assert window.global_search_action.isEnabled()
+
+
+def test_complex_filter_is_modeless_and_keeps_main_window_available(
+    qtbot, tmp_path: Path
+) -> None:
+    create_png(tmp_path / "sample.png")
+    (tmp_path / "sample.txt").write_text("cat\n", encoding="utf-8")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+
+    window._open_complex_filter()
+    dialog = window._complex_filter_dialog
+    assert dialog is not None
+    assert not dialog.isModal()
+    assert dialog.windowModality() == Qt.WindowModality.NonModal
+    assert window.image_list.isEnabled()
+    window._select_row(0)
+    assert window._current_entry() is not None
+
+    window._open_complex_filter()
+    assert window._complex_filter_dialog is dialog
 
 
 def test_normalize_applies_to_all_images_after_confirmation(
@@ -1008,6 +1031,47 @@ def test_review_discard_button_closes_without_writing(
 
     assert dialog.result() == ReviewDialog.DialogCode.Rejected
     assert tag_path.read_bytes() == b"cat\n"
+
+
+def test_complex_filter_executes_check_and_shows_matching_images(
+    qtbot, tmp_path: Path
+) -> None:
+    entries: list[ImageEntry] = []
+    for name, tags in {"cat.png": ["cat"], "dog.png": ["dog"]}.items():
+        image_path = tmp_path / name
+        tag_path = tmp_path / f"{Path(name).stem}.txt"
+        create_png(image_path)
+        source = (", ".join(tags) + "\n").encode()
+        tag_path.write_bytes(source)
+        entries.append(ImageEntry(image_path, tag_path, tags, source))
+
+    dialog = ComplexFilterDialog(entries)
+    qtbot.addWidget(dialog)
+    dialog.code_input.setPlainText(
+        "def check(fn: str, tags: set[str]) -> bool:\n"
+        "    return fn.endswith('.png') and 'cat' in tags\n"
+    )
+    dialog.run_filter()
+
+    assert dialog.results.rowCount() == 1
+    image_item = dialog.results.item(0, 0)
+    assert image_item is not None
+    assert image_item.text() == "cat.png"
+    assert dialog.result_label.text() == "1 matching image(s) out of 2."
+    assert dialog.error_label.isHidden()
+
+
+def test_complex_filter_reports_missing_check_function(qtbot) -> None:
+    dialog = ComplexFilterDialog([])
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    dialog.code_input.setPlainText("value = True")
+    dialog.run_filter()
+
+    assert dialog.results.rowCount() == 0
+    assert dialog.error_label.isVisible()
+    assert "must define check" in dialog.error_label.text()
 
 
 def test_review_temporary_tags_are_kept_and_consumed(
