@@ -601,12 +601,17 @@ class MainWindow(QMainWindow):
         dialog.setWindowFlag(Qt.WindowType.Window, True)
         dialog.setModal(False)
         dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.image_activated.connect(self._select_image_from_complex_filter)
         dialog.destroyed.connect(self._complex_filter_destroyed)
         self._complex_filter_dialog = dialog
         dialog.show()
 
     def _complex_filter_destroyed(self, _object: QObject) -> None:
         self._complex_filter_dialog = None
+
+    def _select_image_from_complex_filter(self, image_path: Path) -> None:
+        row = self.catalog.row_for_image(image_path)
+        self._select_optional_row(row)
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:

@@ -457,6 +457,34 @@ def test_complex_filter_is_modeless_and_keeps_main_window_available(
     assert window._complex_filter_dialog is dialog
 
 
+def test_complex_filter_double_click_selects_image_in_main_window(
+    qtbot, tmp_path: Path
+) -> None:
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    for name, folder in [("first.png", tmp_path), ("second.png", nested)]:
+        create_png(folder / name)
+        (folder / f"{Path(name).stem}.txt").write_text(
+            "cat\n", encoding="utf-8"
+        )
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    window._open_complex_filter()
+    dialog = window._complex_filter_dialog
+    assert dialog is not None
+
+    dialog.run_filter()
+    result_item = dialog.results.item(1, 0)
+    assert result_item is not None
+    dialog.results.itemDoubleClicked.emit(result_item)
+
+    current = window._current_entry()
+    assert current is not None
+    assert current.image_path == nested / "second.png"
+
+
 def test_normalize_applies_to_all_images_after_confirmation(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:

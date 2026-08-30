@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import cast, override
 
-from PySide6.QtCore import Qt, QRegularExpression
+from PySide6.QtCore import Qt, QRegularExpression, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -89,6 +89,8 @@ DEFAULT_FILTER_CODE = '''def check(fn: str, tags: set[str]) -> bool:
 
 
 class ComplexFilterDialog(QDialog):
+    image_activated = Signal(Path)
+
     def __init__(
         self,
         entries: Sequence[ImageEntry],
@@ -133,6 +135,7 @@ class ComplexFilterDialog(QDialog):
         self.results.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
         )
+        self.results.itemDoubleClicked.connect(self._activate_result)
         self.results.horizontalHeader().setStretchLastSection(True)
         self.results.horizontalHeader().setSectionResizeMode(
             0, self.results.horizontalHeader().ResizeMode.Stretch
@@ -198,6 +201,11 @@ class ComplexFilterDialog(QDialog):
             self.results.setItem(
                 row, 0, QTableWidgetItem(self._relative_path(entry.image_path))
             )
+
+    def _activate_result(self, item: QTableWidgetItem) -> None:
+        row = item.row()
+        if 0 <= row < len(self.matches):
+            self.image_activated.emit(self.matches[row].image_path)
 
     def _relative_path(self, path: Path) -> str:
         root = self.root_directory
