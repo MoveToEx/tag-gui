@@ -11,13 +11,14 @@ from PySide6.QtCore import (
     QUrl,
 )
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QGuiApplication, QImage
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QGroupBox, QMessageBox
 
 import tag_gui.main_window as main_window_module
 from tag_gui.domain import ImageEntry, TagOperation
 from tag_gui.main_window import MainWindow
 from tag_gui.global_search import GlobalTagSearchDialog
 from tag_gui.preview import PreviewLoader
+from tag_gui.review import ReviewDialog
 from tag_gui.traversal import TraversalDialog
 
 
@@ -925,3 +926,81 @@ def test_traversal_folder_tree_combines_checked_subtrees(
         deep / "grandchild.png",
         other / "other.png",
     ]
+
+
+def test_review_keyboard_shortcuts_keep_delete_and_navigate(
+    qtbot, tmp_path: Path
+) -> None:
+    entries: list[ImageEntry] = []
+    for name, tags in {"first": ["cat", "dog"], "second": ["bird"]}.items():
+        image_path = tmp_path / f"{name}.png"
+        tag_path = tmp_path / f"{name}.txt"
+        create_png(image_path)
+        source = (", ".join(tags) + "\n").encode()
+        tag_path.write_bytes(source)
+        entries.append(ImageEntry(image_path, tag_path, tags, source))
+
+    dialog = ReviewDialog(entries)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    assert dialog.right_splitter.orientation() == Qt.Orientation.Vertical
+    assert dialog.right_splitter.widget(0) is dialog.tag_panel
+    assert dialog.right_splitter.widget(1) is dialog.controls_panel
+    decision_group = dialog.keep_button.parentWidget()
+    navigation_group = dialog.back_button.parentWidget()
+    session_group = dialog.finish_button.parentWidget()
+    assert isinstance(decision_group, QGroupBox)
+    assert isinstance(navigation_group, QGroupBox)
+    assert isinstance(session_group, QGroupBox)
+    assert decision_group.title() == "Tag decision"
+    assert navigation_group.title() == "Navigation"
+    assert session_group.title() == "Review session"
+    assert dialog.session.current_tag == "cat"
+    assert [dialog.tag_status_list.item(row).text() for row in range(dialog.tag_status_list.count())] == [
+        "[pending] cat",
+        "[pending] dog",
+    ]
+    assert "#b42318" in dialog.delete_button.styleSheet()
+    assert "Reviewed tags 0 of 3" in dialog.progress_label.text()
+    qtbot.keyClick(dialog, Qt.Key.Key_Return)
+    assert dialog.session.current_tag == "dog"
+    assert [dialog.tag_status_list.item(row).text() for row in range(dialog.tag_status_list.count())] == [
+        "[kept] cat",
+        "[pending] dog",
+    ]
+    assert "Reviewed tags 1 of 3" in dialog.progress_label.text()
+    qtbot.keyClick(dialog, Qt.Key.Key_Space)
+    assert dialog.session.current_index == 1
+    assert dialog.session.current_tag == "bird"
+    qtbot.keyClick(dialog, Qt.Key.Key_Left)
+    assert dialog.session.current_index == 0
+    assert dialog.session.current_tag == "cat"
+    qtbot.keyClick(dialog, Qt.Key.Key_Right)
+    assert dialog.session.current_index == 1
+    assert dialog.session.current_tag == "bird"
+
+
+def test_review_discard_button_closes_without_writing(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    image_path = tmp_path / "sample.png"
+    tag_path = tmp_path / "sample.txt"
+    create_png(image_path)
+    tag_path.write_bytes(b"cat\n")
+    entry = ImageEntry(image_path, tag_path, ["cat"], b"cat\n")
+    dialog = ReviewDialog([entry])
+    qtbot.addWidget(dialog)
+
+    dialog._delete()
+    assert dialog.session.has_changes
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: QMessageBox.StandardButton.Discard,
+    )
+    dialog.discard_button.click()
+
+    assert dialog.result() == ReviewDialog.DialogCode.Rejected
+    assert tag_path.read_bytes() == b"cat\n"

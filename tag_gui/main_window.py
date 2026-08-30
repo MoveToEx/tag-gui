@@ -55,6 +55,7 @@ from .domain import (
 )
 from .global_search import GlobalTagSearchDialog
 from .preview import ImageView, PreviewLoader
+from .review import ReviewDialog
 from .storage import (
     BatchPreflightError,
     ExternalChangeError,
@@ -206,6 +207,10 @@ class MainWindow(QMainWindow):
         self.global_search_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
         self.global_search_action.triggered.connect(self._open_global_search)
 
+        self.review_action = QAction("Review Tags...", self)
+        self.review_action.setShortcut(QKeySequence("Ctrl+R"))
+        self.review_action.triggered.connect(self._open_review)
+
         self.first_action = QAction("First", self)
         self.previous_action = QAction(
             "Previous", self
@@ -281,6 +286,7 @@ class MainWindow(QMainWindow):
         tags_menu = self.menuBar().addMenu("&Tags")
         tags_menu.addAction(self.focus_search_action)
         tags_menu.addAction(self.global_search_action)
+        tags_menu.addAction(self.review_action)
         tags_menu.addSeparator()
         for action in self.folder_tag_actions.values():
             tags_menu.addAction(action)
@@ -553,6 +559,22 @@ class MainWindow(QMainWindow):
         if not self.catalog.entries:
             return
         GlobalTagSearchDialog(self.catalog.entries, self).exec()
+
+    def _open_review(self) -> None:
+        if not self.catalog.entries or self.directory is None:
+            return
+        dialog = ReviewDialog(
+            self.catalog.entries,
+            self,
+            root_directory=self.directory,
+        )
+        if dialog.exec() == ReviewDialog.DialogCode.Accepted and dialog.commit_result:
+            current = self._current_entry()
+            self._load_directory(
+                self.directory,
+                preferred_image=current.image_path if current else None,
+                show_issues=False,
+            )
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
@@ -964,6 +986,7 @@ class MainWindow(QMainWindow):
         self.search_input.setEnabled(count > 0)
         self.focus_search_action.setEnabled(count > 0)
         self.global_search_action.setEnabled(count > 0)
+        self.review_action.setEnabled(count > 0 and any(entry.editable and entry.tags for entry in self.catalog.entries))
         has_previous = (
             row is not None and self.catalog.previous_image_row(row) is not None
         )

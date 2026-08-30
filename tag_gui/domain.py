@@ -346,3 +346,161 @@ class TraversalSession:
             if tuple(result) != item.original_tags:
                 changes.append((item, result))
         return changes
+
+
+@dataclass(frozen=True)
+class ReviewItem:
+    image_path: Path
+    tag_path: Path
+    original_tags: tuple[str, ...]
+    source_bytes: bytes
+
+    @classmethod
+    def from_entry(cls, entry: ImageEntry) -> "ReviewItem":
+        if not entry.editable or entry.source_bytes is None:
+            raise ValueError(f"Entry is not editable: {entry.image_path}")
+        return cls(
+            image_path=entry.image_path,
+            tag_path=entry.tag_path,
+            original_tags=tuple(entry.tags),
+            source_bytes=entry.source_bytes,
+        )
+
+
+class ReviewSession:
+    """In-memory review state; sidecars are written only at completion."""
+
+    def __init__(self, entries: Sequence[ImageEntry]) -> None:
+        self.items = [
+            ReviewItem.from_entry(entry)
+            for entry in entries
+            if entry.editable and entry.tags
+        ]
+        self.current_index = 0
+        self.current_tag_index = 0
+        self.completed = not self.items
+        self.working_tags: dict[int, list[str]] = {
+            index: list(item.original_tags) for index, item in enumerate(self.items)
+        }
+        self.reviewed_tags: dict[int, set[str]] = {
+            index: set() for index in range(len(self.items))
+        }
+
+    @property
+    def current_item(self) -> ReviewItem:
+        return self.items[self.current_index]
+
+    @property
+    def current_tags(self) -> list[str]:
+        if not self.items:
+            return []
+        return list(self.working_tags[self.current_index])
+
+    @property
+    def current_tag(self) -> str:
+        if not self.items:
+            return ""
+        tags = self.working_tags[self.current_index]
+        return tags[self.current_tag_index] if tags else ""
+
+    @property
+    def finished(self) -> bool:
+        return self.completed
+
+    @property
+    def total_tag_count(self) -> int:
+        return sum(len(item.original_tags) for item in self.items)
+
+    @property
+    def reviewed_tag_count(self) -> int:
+        return sum(len(tags) for tags in self.reviewed_tags.values())
+
+    @property
+    def at_first(self) -> bool:
+        return self.current_index == 0 and self.current_tag_index == 0
+
+    @property
+    def at_last(self) -> bool:
+        if not self.items or self.completed:
+            return True
+        return self._next_position() is None
+
+    @property
+    def has_changes(self) -> bool:
+        return any(
+            tuple(self.working_tags[index]) != item.original_tags
+            for index, item in enumerate(self.items)
+        )
+
+    def keep_current(self) -> None:
+        if self.completed:
+            return
+        self.reviewed_tags[self.current_index].add(self.current_tag)
+        if not self._advance():
+            self.completed = True
+
+    def delete_current(self) -> None:
+        if self.completed:
+            return
+        tags = self.working_tags[self.current_index]
+        if not tags:
+            if not self._advance():
+                self.completed = True
+            return
+        removed = tags[self.current_tag_index]
+        self.reviewed_tags[self.current_index].add(removed)
+        del tags[self.current_tag_index]
+        self.current_tag_index -= 1
+        if not self._advance():
+            self.completed = True
+
+    def move_back(self) -> bool:
+        if self.completed:
+            self.completed = False
+            previous = self.current_index - 1
+            while previous >= 0:
+                if self.working_tags[previous]:
+                    self.current_index = previous
+                    self.current_tag_index = len(self.current_tags) - 1
+                    return True
+                previous -= 1
+            self.completed = True
+            return False
+        if self.current_tag_index > 0:
+            self.current_tag_index -= 1
+            return True
+        previous = self.current_index - 1
+        while previous >= 0:
+            if self.working_tags[previous]:
+                self.current_index = previous
+                self.current_tag_index = len(self.current_tags) - 1
+                return True
+            previous -= 1
+        return False
+
+    def _advance(self) -> bool:
+        position = self._next_position()
+        if position is None:
+            return False
+        self.current_index, self.current_tag_index = position
+        return True
+
+    def _next_position(self) -> tuple[int, int] | None:
+        if not self.items:
+            return None
+        tags = self.working_tags[self.current_index]
+        for tag_index in range(self.current_tag_index + 1, len(tags)):
+            if tags[tag_index] not in self.reviewed_tags[self.current_index]:
+                return self.current_index, tag_index
+        for image_index in range(self.current_index + 1, len(self.items)):
+            for tag_index, tag in enumerate(self.working_tags[image_index]):
+                if tag not in self.reviewed_tags[image_index]:
+                    return image_index, tag_index
+        return None
+
+    def staged_changes(self) -> list[tuple[ReviewItem, list[str]]]:
+        return [
+            (item, list(self.working_tags[index]))
+            for index, item in enumerate(self.items)
+            if tuple(self.working_tags[index]) != item.original_tags
+        ]

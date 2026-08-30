@@ -6,6 +6,7 @@ import pytest
 
 from tag_gui.domain import (
     ImageEntry,
+    ReviewSession,
     TagOperation,
     TraversalSession,
     apply_tag_operation,
@@ -232,3 +233,31 @@ def test_traversal_all_available_changes_uses_every_option(tmp_path: Path) -> No
     assert add_session.all_available_changes()[0][1] == ["bird", "cat", "dog"]
     assert delete_session.all_available_changes()[0][1] == ["bird"]
     assert toggle_session.all_available_changes()[0][1] == ["dog"]
+
+
+def test_review_session_stages_deletions_and_advances_by_tag(tmp_path: Path) -> None:
+    session = ReviewSession(
+        [
+            _entry(tmp_path, "first.jpg", ["cat", "dog"]),
+            _entry(tmp_path, "second.jpg", ["bird"]),
+        ]
+    )
+
+    assert session.current_tag == "cat"
+    assert session.reviewed_tag_count == 0
+    assert session.total_tag_count == 3
+    session.keep_current()
+    assert session.current_tag == "dog"
+    assert session.reviewed_tag_count == 1
+    session.delete_current()
+    assert session.current_index == 1
+    assert session.current_tag == "bird"
+    assert session.staged_changes()[0][1] == ["cat"]
+
+    middle = ReviewSession([_entry(tmp_path, "middle.jpg", ["a", "b", "c"])])
+    middle.keep_current()
+    middle.delete_current()
+    assert middle.current_tag == "c"
+    session.keep_current()
+    assert session.finished
+    assert session.staged_changes()[0][1] == ["cat"]
