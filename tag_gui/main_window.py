@@ -62,6 +62,7 @@ from .storage import (
     BatchPreflightError,
     ExternalChangeError,
     WriteRequest,
+    flatten_entries,
     scan_folder,
     write_tags_atomic,
     write_tags_batch,
@@ -198,6 +199,9 @@ class MainWindow(QMainWindow):
         self.rescan_action.setShortcut(QKeySequence("F5"))
         self.rescan_action.triggered.connect(self.rescan)
 
+        self.flatten_action = QAction("Flatten To...", self)
+        self.flatten_action.triggered.connect(self._flatten_folder)
+
         self.exit_action = QAction("Exit", self)
         self.exit_action.setShortcut(QKeySequence.StandardKey.Quit)
         self.exit_action.triggered.connect(self.close)
@@ -280,6 +284,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.open_action)
         file_menu.addAction(self.close_folder_action)
         file_menu.addAction(self.rescan_action)
+        file_menu.addSeparator()
+        file_menu.addAction(self.flatten_action)
         file_menu.addSeparator()
         file_menu.addAction(self.exit_action)
 
@@ -403,6 +409,39 @@ class MainWindow(QMainWindow):
             preferred_image=current.image_path if current else None,
             show_issues=True,
         )
+
+    def _flatten_folder(self) -> None:
+        if not self.catalog.entries:
+            return
+        start = str(self.directory or "")
+        selected = QFileDialog.getExistingDirectory(
+            self, "Select Flatten Destination", start
+        )
+        if not selected:
+            return
+        destination = Path(selected)
+        try:
+            result = flatten_entries(self.catalog.entries, destination)
+        except OSError as exc:
+            QMessageBox.critical(self, "Could Not Flatten Folder", str(exc))
+            return
+
+        copied_count = len(result.succeeded)
+        if result.failures:
+            details = "\n".join(
+                f"{path.name}: {message}"
+                for path, message in result.failures.items()
+            )
+            QMessageBox.warning(
+                self,
+                "Some Files Were Not Copied",
+                f"Copied {copied_count} image/tag pair(s).\n\n{details}",
+            )
+        else:
+            self.statusBar().showMessage(
+                f"Flattened {copied_count} image/tag pair(s) into {destination}.",
+                5000,
+            )
 
     def _load_directory(
         self,
@@ -1049,6 +1088,7 @@ class MainWindow(QMainWindow):
         has_directory = self.directory is not None
         self.close_folder_action.setEnabled(has_directory)
         self.rescan_action.setEnabled(has_directory)
+        self.flatten_action.setEnabled(count > 0)
         self.search_input.setEnabled(count > 0)
         self.focus_search_action.setEnabled(count > 0)
         self.global_search_action.setEnabled(count > 0)

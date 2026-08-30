@@ -8,6 +8,7 @@ from tag_gui.storage import (
     BatchPreflightError,
     ExternalChangeError,
     WriteRequest,
+    flatten_entries,
     scan_folder,
     write_tags_atomic,
     write_tags_batch,
@@ -121,6 +122,52 @@ def test_invalid_utf8_sidecar_is_visible_but_read_only(tmp_path: Path) -> None:
 
     assert not entry.editable
     assert "UTF-8" in (entry.error or "")
+
+
+def test_flatten_entries_copies_nested_pairs_with_unique_stems(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    first = source / "first"
+    second = source / "second"
+    first.mkdir(parents=True)
+    second.mkdir()
+    touch_image(first / "sample.jpg")
+    touch_image(second / "sample.jpg")
+    (first / "sample.txt").write_bytes(b"first tags\n")
+    (second / "sample.txt").write_bytes(b"second tags\n")
+    entries = scan_folder(source, IMAGE_EXTENSIONS).entries
+
+    result = flatten_entries(entries, destination)
+
+    assert result.complete
+    assert [pair[0].name for pair in result.succeeded] == [
+        "sample.jpg",
+        "sample_1.jpg",
+    ]
+    assert (destination / "sample.txt").read_bytes() == b"first tags\n"
+    assert (destination / "sample_1.txt").read_bytes() == b"second tags\n"
+
+
+def test_flatten_entries_renames_destination_conflicts(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    touch_image(source / "sample.png")
+    (source / "sample.txt").write_bytes(b"new tags\n")
+    touch_image(destination / "sample.png")
+    (destination / "sample.txt").write_bytes(b"existing tags\n")
+    entry = scan_folder(source, IMAGE_EXTENSIONS).entries[0]
+
+    result = flatten_entries([entry], destination)
+
+    assert result.complete
+    assert (destination / "sample.png").read_bytes() == b"not decoded by scanner"
+    assert (destination / "sample.txt").read_bytes() == b"existing tags\n"
+    assert (destination / "sample_1.png").exists()
+    assert (destination / "sample_1.txt").read_bytes() == b"new tags\n"
 
 
 def test_atomic_write_detects_external_change(tmp_path: Path) -> None:

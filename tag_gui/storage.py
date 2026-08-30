@@ -36,6 +36,16 @@ class BatchCommitResult:
 
 
 @dataclass
+class FlattenResult:
+    succeeded: list[tuple[Path, Path]]
+    failures: dict[Path, str]
+
+    @property
+    def complete(self) -> bool:
+        return not self.failures
+
+
+@dataclass
 class _ResolvedImage:
     image_path: Path
     tag_path: Path
@@ -201,6 +211,77 @@ def scan_folder(directory: Path, supported_extensions: Iterable[str]) -> ScanRes
         )
 
     return result
+
+
+def _copy_exclusive(source: Path, destination: Path) -> None:
+    created = False
+    try:
+        with source.open("rb") as source_stream, destination.open("xb") as target_stream:
+            created = True
+            shutil.copyfileobj(source_stream, target_stream)
+        shutil.copystat(source, destination)
+    except Exception:
+        if created:
+            destination.unlink(missing_ok=True)
+        raise
+
+
+def flatten_entries(
+    entries: Sequence[ImageEntry], destination: Path
+) -> FlattenResult:
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    occupied_names = {
+        child.name.casefold() for child in destination.iterdir()
+    }
+    succeeded: list[tuple[Path, Path]] = []
+    failures: dict[Path, str] = {}
+
+    for entry in entries:
+        if not entry.image_path.is_file():
+            failures[entry.image_path] = "Image file does not exist."
+            continue
+        if not entry.tag_path.is_file():
+            failures[entry.image_path] = (
+                f"Tag file does not exist: {entry.tag_path.name}"
+            )
+            continue
+
+        index = 0
+        while True:
+            output_stem = (
+                entry.image_path.stem
+                if index == 0
+                else f"{entry.image_path.stem}_{index}"
+            )
+            image_name = f"{output_stem}{entry.image_path.suffix}"
+            tag_name = f"{output_stem}.txt"
+            keys = {image_name.casefold(), tag_name.casefold()}
+            if keys.isdisjoint(occupied_names):
+                break
+            index += 1
+
+        image_target = destination / image_name
+        tag_target = destination / tag_name
+        image_created = False
+        tag_created = False
+        try:
+            _copy_exclusive(entry.image_path, image_target)
+            image_created = True
+            _copy_exclusive(entry.tag_path, tag_target)
+            tag_created = True
+        except OSError as exc:
+            if tag_created:
+                tag_target.unlink(missing_ok=True)
+            if image_created:
+                image_target.unlink(missing_ok=True)
+            failures[entry.image_path] = str(exc)
+            continue
+
+        occupied_names.update(keys)
+        succeeded.append((image_target, tag_target))
+
+    return FlattenResult(succeeded=succeeded, failures=failures)
 
 
 def _check_expected_bytes(path: Path, expected_bytes: bytes | None) -> None:

@@ -77,6 +77,33 @@ def test_navigation_actions_stop_at_boundaries(qtbot, tmp_path: Path) -> None:
     assert window.previous_action.isEnabled()
 
 
+def test_flatten_action_copies_open_folder_without_hierarchy(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source"
+    nested = source / "nested"
+    destination = tmp_path / "destination"
+    nested.mkdir(parents=True)
+    destination.mkdir()
+    create_png(nested / "sample.png")
+    (nested / "sample.txt").write_text("cat\n", encoding="utf-8")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(source, show_issues=False)
+    monkeypatch.setattr(
+        main_window_module.QFileDialog,
+        "getExistingDirectory",
+        lambda *_args: str(destination),
+    )
+
+    assert window.flatten_action.isEnabled()
+    window.flatten_action.trigger()
+
+    assert (destination / "sample.png").exists()
+    assert (destination / "sample.txt").read_text(encoding="utf-8") == "cat\n"
+    assert "Flattened 1 image/tag pair" in window.statusBar().currentMessage()
+
+
 def test_image_context_delete_moves_image_and_tag_to_trash(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:
@@ -228,6 +255,7 @@ def test_close_folder_empties_program_state(qtbot, tmp_path: Path) -> None:
     assert window.statusBar().currentMessage() == ""
     assert not window.close_folder_action.isEnabled()
     assert not window.rescan_action.isEnabled()
+    assert not window.flatten_action.isEnabled()
     assert not window.search_input.isEnabled()
     assert not window.tag_input.isEnabled()
     assert not window.bulk_operation_action.isEnabled()
