@@ -1034,10 +1034,29 @@ def test_review_keyboard_shortcuts_keep_delete_and_navigate(
     assert dialog.session.current_tag == "bird"
     qtbot.keyClick(dialog, Qt.Key.Key_Left)
     assert dialog.session.current_index == 0
-    assert dialog.session.current_tag == "cat"
+    assert dialog.session.current_tag == "dog"
     qtbot.keyClick(dialog, Qt.Key.Key_Right)
     assert dialog.session.current_index == 1
     assert dialog.session.current_tag == "bird"
+    assert dialog.session.working_tags[0] == ["cat"]
+
+
+def test_review_extra_tag_input_accepts_spaces(qtbot, tmp_path: Path) -> None:
+    image_path = tmp_path / "sample.png"
+    tag_path = tmp_path / "sample.txt"
+    create_png(image_path)
+    tag_path.write_bytes(b"cat\n")
+    dialog = ReviewDialog(
+        [ImageEntry(image_path, tag_path, ["cat"], b"cat\n")]
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.temporary_input.setFocus()
+
+    qtbot.keyClicks(dialog.temporary_input, "two words")
+
+    assert dialog.temporary_input.text() == "two words"
+    assert dialog.session.current_tags == ["cat"]
 
 
 def test_review_discard_button_closes_without_writing(

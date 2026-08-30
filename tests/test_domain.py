@@ -258,9 +258,32 @@ def test_review_session_stages_deletions_and_advances_by_tag(tmp_path: Path) -> 
     middle.keep_current()
     middle.delete_current()
     assert middle.current_tag == "c"
+    assert middle.move_back()
+    assert middle.current_tag == "b"
+    assert middle.current_tags == ["a", "c"]
+    middle.keep_current()
+    assert middle.current_tags == ["a", "b", "c"]
     session.keep_current()
     assert session.finished
     assert session.staged_changes()[0][1] == ["cat"]
+
+
+def test_review_navigation_only_shifts_position(tmp_path: Path) -> None:
+    session = ReviewSession(
+        [
+            _entry(tmp_path, "first.jpg", ["cat", "dog"]),
+            _entry(tmp_path, "second.jpg", ["bird"]),
+        ]
+    )
+
+    assert session.move_forward()
+    assert session.current_tag == "dog"
+    assert session.reviewed_tag_count == 0
+    session.delete_current()
+    assert session.current_tag == "bird"
+    assert session.move_back()
+    assert session.current_tag == "dog"
+    assert session.current_tags == ["cat"]
 
 
 def test_review_session_adds_extra_tags_as_kept(tmp_path: Path) -> None:

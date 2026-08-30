@@ -400,8 +400,7 @@ class ReviewSession:
     def current_tag(self) -> str:
         if not self.items:
             return ""
-        tags = self.working_tags[self.current_index]
-        return tags[self.current_tag_index] if tags else ""
+        return self.current_item.original_tags[self.current_tag_index]
 
     @property
     def finished(self) -> bool:
@@ -447,7 +446,9 @@ class ReviewSession:
     def keep_current(self) -> None:
         if self.completed:
             return
-        self.reviewed_tags[self.current_index].add(self.current_tag)
+        tag = self.current_tag
+        self._restore_original_tag(tag)
+        self.reviewed_tags[self.current_index].add(tag)
         if not self._advance():
             self.completed = True
 
@@ -455,14 +456,10 @@ class ReviewSession:
         if self.completed:
             return
         tags = self.working_tags[self.current_index]
-        if not tags:
-            if not self._advance():
-                self.completed = True
-            return
-        removed = tags[self.current_tag_index]
-        self.reviewed_tags[self.current_index].add(removed)
-        del tags[self.current_tag_index]
-        self.current_tag_index -= 1
+        tag = self.current_tag
+        self.reviewed_tags[self.current_index].add(tag)
+        if tag in tags:
+            tags.remove(tag)
         if not self._advance():
             self.completed = True
 
@@ -478,26 +475,24 @@ class ReviewSession:
     def move_back(self) -> bool:
         if self.completed:
             self.completed = False
-            previous = self.current_index - 1
-            while previous >= 0:
-                if self.working_tags[previous]:
-                    self.current_index = previous
-                    self.current_tag_index = len(self.current_tags) - 1
-                    return True
-                previous -= 1
-            self.completed = True
-            return False
+            return True
         if self.current_tag_index > 0:
             self.current_tag_index -= 1
             return True
-        previous = self.current_index - 1
-        while previous >= 0:
-            if self.working_tags[previous]:
-                self.current_index = previous
-                self.current_tag_index = len(self.current_tags) - 1
-                return True
-            previous -= 1
+        if self.current_index > 0:
+            self.current_index -= 1
+            self.current_tag_index = len(self.current_item.original_tags) - 1
+            return True
         return False
+
+    def move_forward(self) -> bool:
+        if self.completed:
+            return False
+        position = self._next_position()
+        if position is None:
+            return False
+        self.current_index, self.current_tag_index = position
+        return True
 
     def _advance(self) -> bool:
         position = self._next_position()
@@ -509,15 +504,24 @@ class ReviewSession:
     def _next_position(self) -> tuple[int, int] | None:
         if not self.items:
             return None
-        tags = self.working_tags[self.current_index]
-        for tag_index in range(self.current_tag_index + 1, len(tags)):
-            if tags[tag_index] not in self.reviewed_tags[self.current_index]:
-                return self.current_index, tag_index
-        for image_index in range(self.current_index + 1, len(self.items)):
-            for tag_index, tag in enumerate(self.working_tags[image_index]):
-                if tag not in self.reviewed_tags[image_index]:
-                    return image_index, tag_index
+        if self.current_tag_index + 1 < len(self.current_item.original_tags):
+            return self.current_index, self.current_tag_index + 1
+        if self.current_index + 1 < len(self.items):
+            return self.current_index + 1, 0
         return None
+
+    def _restore_original_tag(self, tag: str) -> None:
+        tags = self.working_tags[self.current_index]
+        if tag in tags:
+            return
+        original_tags = self.current_item.original_tags
+        original_set = set(original_tags)
+        kept_originals = set(tags)
+        kept_originals.add(tag)
+        extras = [existing for existing in tags if existing not in original_set]
+        self.working_tags[self.current_index] = [
+            existing for existing in original_tags if existing in kept_originals
+        ] + extras
 
     def staged_changes(self) -> list[tuple[ReviewItem, list[str]]]:
         return [

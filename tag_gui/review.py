@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import cast, override
 
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import (
     QDialog,
     QGroupBox,
@@ -54,7 +54,6 @@ class ReviewDialog(QDialog):
         self._allow_close = False
         self._updating_checks = False
         self._started = root_directory is None
-        self._shortcuts: list[QShortcut] = []
 
         self.setWindowTitle("Review Tags")
         self.resize(980, 680)
@@ -153,7 +152,7 @@ class ReviewDialog(QDialog):
         self.back_button.clicked.connect(self._back)
         self.keep_button.clicked.connect(self._keep)
         self.delete_button.clicked.connect(self._delete)
-        self.next_button.clicked.connect(self._keep)
+        self.next_button.clicked.connect(self._next)
         self.discard_button.clicked.connect(self._discard_and_close)
         self.finish_button.clicked.connect(self._finish)
 
@@ -223,7 +222,6 @@ class ReviewDialog(QDialog):
         self._root_layout.addWidget(self.folder_setup, 1)
         self._root_layout.addWidget(self.review_widget, 1)
         self.review_widget.hide()
-        self._create_shortcuts()
         self.installEventFilter(self)
         for widget in self.findChildren(QWidget):
             widget.installEventFilter(self)
@@ -347,8 +345,6 @@ class ReviewDialog(QDialog):
             QMessageBox.information(self, "Nothing to Review", "The selected images have no editable tags.")
             return
         self._started = True
-        for shortcut in self._shortcuts:
-            shortcut.setEnabled(True)
         self.folder_setup.hide()
         self.review_widget.show()
         self._load_current()
@@ -369,7 +365,8 @@ class ReviewDialog(QDialog):
             return
         self.progress_label.setText(
             f"Image {session.current_index + 1} of {len(session.items)}"
-            f" | Tag {session.current_tag_index + 1} of {len(session.current_tags)}"
+            f" | Tag {session.current_tag_index + 1} of "
+            f"{len(session.current_item.original_tags)}"
             f" | Reviewed tags {session.reviewed_tag_count} of "
             f"{session.total_tag_count}"
         )
@@ -430,6 +427,8 @@ class ReviewDialog(QDialog):
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if self._started and event.type() == QEvent.Type.KeyPress:
+            if isinstance(watched, QLineEdit):
+                return super().eventFilter(watched, event)
             key_event = cast(QKeyEvent, event)
             if key_event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:
                 self._keep()
@@ -441,24 +440,9 @@ class ReviewDialog(QDialog):
                 self._back()
                 return True
             if key_event.key() == Qt.Key.Key_Right:
-                self._keep()
+                self._next()
                 return True
         return super().eventFilter(watched, event)
-
-    def _create_shortcuts(self) -> None:
-        shortcuts = {
-            "Return": self._keep,
-            "Enter": self._keep,
-            "Space": self._delete,
-            "Left": self._back,
-            "Right": self._keep,
-        }
-        for key, callback in shortcuts.items():
-            shortcut = QShortcut(QKeySequence(key), self)
-            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-            shortcut.activated.connect(callback)
-            shortcut.setEnabled(self._started)
-            self._shortcuts.append(shortcut)
 
     def _actual_size(self) -> None:
         self.fit_action.setChecked(False)
@@ -477,12 +461,16 @@ class ReviewDialog(QDialog):
         if self.session.move_back():
             self._load_current()
 
+    def _next(self) -> None:
+        if self.session.move_forward():
+            self._load_current()
+
     def _update_buttons(self) -> None:
         done = self.session.finished
-        self.back_button.setEnabled(not self.session.at_first and not done)
+        self.back_button.setEnabled(not self.session.at_first)
         self.keep_button.setEnabled(not done)
         self.delete_button.setEnabled(not done)
-        self.next_button.setEnabled(not done)
+        self.next_button.setEnabled(not done and not self.session.at_last)
         self.finish_button.setEnabled(True)
         self._update_temporary_button()
 
