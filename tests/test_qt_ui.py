@@ -14,6 +14,7 @@ from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QGuiApplication, 
 from PySide6.QtWidgets import QGroupBox, QMessageBox
 
 import tag_gui.main_window as main_window_module
+from tag_gui.bulk_operation import BulkOperationDialog
 from tag_gui.domain import ImageEntry, TagOperation
 from tag_gui.complex_filter import ComplexFilterDialog
 from tag_gui.main_window import MainWindow
@@ -46,6 +47,7 @@ def test_main_window_loads_folder_and_edits_current_tags(qtbot, tmp_path: Path) 
         "cat",
     ]
     assert window.windowTitle() == f"{tmp_path.name} - Image Tagger"
+    assert window.bulk_operation_action.isEnabled()
 
     qtbot.waitUntil(lambda: "32 × 24 px" in window.image_info_label.text())
     image_info = window.image_info_label.text()
@@ -228,6 +230,7 @@ def test_close_folder_empties_program_state(qtbot, tmp_path: Path) -> None:
     assert not window.rescan_action.isEnabled()
     assert not window.search_input.isEnabled()
     assert not window.tag_input.isEnabled()
+    assert not window.bulk_operation_action.isEnabled()
 
 
 def test_close_folder_allows_another_folder_drop(qtbot, tmp_path: Path) -> None:
@@ -1075,6 +1078,9 @@ def test_complex_filter_executes_check_and_shows_matching_images(
 
     dialog = ComplexFilterDialog(entries)
     qtbot.addWidget(dialog)
+    assert dialog.code_input.tabStopDistance() == (
+        dialog.code_input.fontMetrics().horizontalAdvance(" ") * 4
+    )
     dialog.code_input.setPlainText(
         "def check(fn: str, tags: set[str]) -> bool:\n"
         "    return fn.endswith('.png') and 'cat' in tags\n"
@@ -1100,6 +1106,162 @@ def test_complex_filter_reports_missing_check_function(qtbot) -> None:
     assert dialog.results.rowCount() == 0
     assert dialog.error_label.isVisible()
     assert "must define check" in dialog.error_label.text()
+
+
+def test_bulk_operation_folder_selection_cascades(qtbot, tmp_path: Path) -> None:
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    create_png(tmp_path / "root.png")
+    create_png(nested / "child.png")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+
+    dialog = BulkOperationDialog(
+        window.catalog.entries,
+        root_directory=tmp_path,
+    )
+    qtbot.addWidget(dialog)
+    assert dialog.pages.count() == 3
+    assert dialog.pages.currentWidget() is dialog.selection_page
+    assert dialog.code_input.tabStopDistance() == (
+        dialog.code_input.fontMetrics().horizontalAdvance(" ") * 4
+    )
+    root_item = dialog.folder_tree.topLevelItem(0)
+    assert root_item is not None
+    assert len(dialog._checked_entries()) == 2
+
+    nested_item = next(
+        root_item.child(index)
+        for index in range(root_item.childCount())
+        if root_item.child(index).text(0) == "nested"
+    )
+    nested_item.setCheckState(0, Qt.CheckState.Unchecked)
+
+    assert [entry.image_path.name for entry in dialog._checked_entries()] == [
+        "root.png"
+    ]
+    assert root_item.checkState(0) == Qt.CheckState.PartiallyChecked
+    assert dialog.folder_selection_label.text() == "1 image(s) selected."
+
+
+def test_bulk_operation_runs_code_and_skips_unchanged_images(
+    qtbot, tmp_path: Path
+) -> None:
+    for name, tags in {"cat.png": "cat\n", "dog.png": "dog\n"}.items():
+        create_png(tmp_path / name)
+        (tmp_path / f"{Path(name).stem}.txt").write_text(tags, encoding="utf-8")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    dialog = BulkOperationDialog(
+        window.catalog.entries,
+        root_directory=tmp_path,
+    )
+    qtbot.addWidget(dialog)
+
+    dialog._show_code_page()
+    dialog.code_input.setPlainText(
+        "def process(fn: str, tags: set[str]) -> set[str]:\n"
+        "    return tags | {'new'} if fn == 'cat.png' else tags\n"
+    )
+    dialog._run_code()
+
+    assert dialog.pages.currentWidget() is dialog.approval_page
+    assert len(dialog._changes) == 1
+    assert dialog.current_change.entry.image_path.name == "cat.png"
+    assert dialog.original_tags_input.toPlainText() == "cat"
+    assert dialog.new_tags_input.toPlainText() == "cat, new"
+    assert dialog.original_tags_input.maximumHeight() == 100
+    assert dialog.new_tags_input.maximumHeight() == 100
+    assert dialog.changes_text.toPlainText() == "[+] new"
+
+
+def test_bulk_operation_reports_invalid_process_return(qtbot, tmp_path: Path) -> None:
+    create_png(tmp_path / "sample.png")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    dialog = BulkOperationDialog(
+        window.catalog.entries,
+        root_directory=tmp_path,
+    )
+    qtbot.addWidget(dialog)
+    dialog._show_code_page()
+    dialog.code_input.setPlainText(
+        "def process(fn: str, tags: set[str]) -> set[str]:\n"
+        "    return ['not', 'a', 'set']\n"
+    )
+
+    dialog._run_code()
+
+    assert dialog.pages.currentWidget() is dialog.code_page
+    assert dialog.code_error_label.isVisibleTo(dialog)
+    assert "must return set[str]" in dialog.code_error_label.text()
+
+
+def test_bulk_operation_confirms_and_skips_with_shortcuts(
+    qtbot, tmp_path: Path
+) -> None:
+    for name, tags in {"first.png": "cat\n", "second.png": "dog\n"}.items():
+        create_png(tmp_path / name)
+        (tmp_path / f"{Path(name).stem}.txt").write_text(tags, encoding="utf-8")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    dialog = BulkOperationDialog(
+        window.catalog.entries,
+        root_directory=tmp_path,
+    )
+    qtbot.addWidget(dialog)
+    dialog._show_code_page()
+    dialog.code_input.setPlainText(
+        "def process(fn: str, tags: set[str]) -> set[str]:\n"
+        "    return tags | {'processed'}\n"
+    )
+    dialog._run_code()
+    dialog.new_tags_input.setPlainText("cat, edited")
+
+    qtbot.keyClick(dialog.confirm_button, Qt.Key.Key_Return)
+    assert dialog.current_change.entry.image_path.name == "second.png"
+    qtbot.keyClick(dialog.confirm_button, Qt.Key.Key_Space)
+
+    assert dialog.result() == BulkOperationDialog.DialogCode.Accepted
+    assert (tmp_path / "first.txt").read_text(encoding="utf-8") == (
+        "cat, edited\n"
+    )
+    assert (tmp_path / "second.txt").read_text(encoding="utf-8") == "dog\n"
+
+
+def test_bulk_operation_discard_returns_to_code_without_writing(
+    qtbot, tmp_path: Path
+) -> None:
+    for name in ["first", "second"]:
+        create_png(tmp_path / f"{name}.png")
+        (tmp_path / f"{name}.txt").write_text("cat\n", encoding="utf-8")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    dialog = BulkOperationDialog(
+        window.catalog.entries,
+        root_directory=tmp_path,
+    )
+    qtbot.addWidget(dialog)
+    dialog._show_code_page()
+    dialog.code_input.setPlainText(
+        "def process(fn: str, tags: set[str]) -> set[str]:\n"
+        "    return tags | {'processed'}\n"
+    )
+    dialog._run_code()
+    dialog._confirm_current()
+    assert dialog._approved
+
+    dialog.discard_button.click()
+
+    assert dialog.pages.currentWidget() is dialog.code_page
+    assert not dialog._approved
+    assert (tmp_path / "first.txt").read_text(encoding="utf-8") == "cat\n"
+    assert (tmp_path / "second.txt").read_text(encoding="utf-8") == "cat\n"
 
 
 def test_review_temporary_tags_are_kept_and_consumed(

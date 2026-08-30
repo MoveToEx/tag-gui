@@ -3,15 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import os
 from pathlib import Path
-from typing import cast, override
+from typing import cast
 
-from PySide6.QtCore import Qt, QRegularExpression, Signal
-from PySide6.QtGui import (
-    QColor,
-    QFont,
-    QSyntaxHighlighter,
-    QTextCharFormat,
-)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -28,60 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from .domain import ImageEntry
-
-
-class PythonSyntaxHighlighter(QSyntaxHighlighter):
-    """Small dependency-free Python syntax highlighter for the filter editor."""
-
-    def __init__(self, document) -> None:
-        super().__init__(document)
-        self._rules: list[tuple[QRegularExpression, QTextCharFormat]] = []
-        self._add_rule(
-            r"#[^\n]*",
-            foreground="#667085",
-            italic=True,
-        )
-        self._add_rule(
-            r"\b(and|as|assert|await|break|class|continue|def|del|elif|else|"
-            r"except|False|finally|for|from|global|if|import|in|is|lambda|"
-            r"None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield)\b",
-            foreground="#6941c6",
-            bold=True,
-        )
-        self._add_rule(
-            r"\b(len|any|all|sum|min|max|sorted|set|str|int|bool)\b",
-            foreground="#175cd3",
-        )
-        self._add_rule(
-            r"\b[0-9]+(?:\.[0-9]+)?\b",
-            foreground="#b54708",
-        )
-        self._add_rule(
-            r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*')",
-            foreground="#027a48",
-        )
-
-    def _add_rule(
-        self,
-        pattern: str,
-        *,
-        foreground: str,
-        bold: bool = False,
-        italic: bool = False,
-    ) -> None:
-        format_ = QTextCharFormat()
-        format_.setForeground(QColor(foreground))
-        format_.setFontWeight(QFont.Weight.Bold if bold else QFont.Weight.Normal)
-        format_.setFontItalic(italic)
-        self._rules.append((QRegularExpression(pattern), format_))
-
-    @override
-    def highlightBlock(self, text: str) -> None:
-        for expression, format_ in self._rules:
-            match = expression.globalMatch(text)
-            while match.hasNext():
-                result = match.next()
-                self.setFormat(result.capturedStart(), result.capturedLength(), format_)
+from .python_syntax import PythonSyntaxHighlighter
 
 
 DEFAULT_FILTER_CODE = '''def check(fn: str, tags: set[str]) -> bool:
@@ -114,6 +56,9 @@ class ComplexFilterDialog(QDialog):
         font = QFont("Consolas")
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.code_input.setFont(font)
+        self.code_input.setTabStopDistance(
+            self.code_input.fontMetrics().horizontalAdvance(" ") * 4
+        )
         self.highlighter = PythonSyntaxHighlighter(self.code_input.document())
 
         self.run_button = QPushButton()

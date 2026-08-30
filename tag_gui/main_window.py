@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .bulk_operation import BulkOperationDialog
 from .catalog import ImageCatalogModel
 from .complex_filter import ComplexFilterDialog
 from .domain import (
@@ -217,6 +218,9 @@ class MainWindow(QMainWindow):
         self.complex_filter_action.setShortcut(QKeySequence("Ctrl+Alt+F"))
         self.complex_filter_action.triggered.connect(self._open_complex_filter)
 
+        self.bulk_operation_action = QAction("Bulk Operation...", self)
+        self.bulk_operation_action.triggered.connect(self._open_bulk_operation)
+
         self.first_action = QAction("First", self)
         self.previous_action = QAction(
             "Previous", self
@@ -294,6 +298,7 @@ class MainWindow(QMainWindow):
         tags_menu.addAction(self.global_search_action)
         tags_menu.addAction(self.review_action)
         tags_menu.addAction(self.complex_filter_action)
+        tags_menu.addAction(self.bulk_operation_action)
         tags_menu.addSeparator()
         for action in self.folder_tag_actions.values():
             tags_menu.addAction(action)
@@ -605,6 +610,30 @@ class MainWindow(QMainWindow):
         dialog.destroyed.connect(self._complex_filter_destroyed)
         self._complex_filter_dialog = dialog
         dialog.show()
+
+    def _open_bulk_operation(self) -> None:
+        if self.directory is None:
+            return
+        editable_entries = [
+            entry for entry in self.catalog.entries if entry.editable
+        ]
+        if not editable_entries:
+            return
+        current = self._current_entry()
+        dialog = BulkOperationDialog(
+            editable_entries,
+            self,
+            root_directory=self.directory,
+        )
+        if (
+            dialog.exec() == BulkOperationDialog.DialogCode.Accepted
+            and self.directory is not None
+        ):
+            self._load_directory(
+                self.directory,
+                preferred_image=current.image_path if current else None,
+                show_issues=False,
+            )
 
     def _complex_filter_destroyed(self, _object: QObject) -> None:
         self._complex_filter_dialog = None
@@ -1038,6 +1067,7 @@ class MainWindow(QMainWindow):
         for button in self.inline_buttons:
             button.setEnabled(editable)
         any_editable = any(entry.editable for entry in self.catalog.entries)
+        self.bulk_operation_action.setEnabled(any_editable)
         for action in self.folder_tag_actions.values():
             action.setEnabled(any_editable)
         self.normalize_action.setEnabled(any_editable)
