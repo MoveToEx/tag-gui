@@ -261,3 +261,13 @@ def test_review_session_stages_deletions_and_advances_by_tag(tmp_path: Path) -> 
     session.keep_current()
     assert session.finished
     assert session.staged_changes()[0][1] == ["cat"]
+
+
+def test_review_session_adds_extra_tags_as_kept(tmp_path: Path) -> None:
+    session = ReviewSession([_entry(tmp_path, "extra.jpg", ["cat"])])
+
+    assert session.add_kept_tags(["new", "cat"]) == ["new"]
+    assert session.current_tags == ["cat", "new"]
+    assert "new" in session.reviewed_tags[0]
+    assert session.reviewed_tag_count == 0
+    assert session.staged_changes()[0][1] == ["cat", "new"]

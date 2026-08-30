@@ -948,6 +948,10 @@ def test_review_keyboard_shortcuts_keep_delete_and_navigate(
     assert dialog.right_splitter.orientation() == Qt.Orientation.Vertical
     assert dialog.right_splitter.widget(0) is dialog.tag_panel
     assert dialog.right_splitter.widget(1) is dialog.controls_panel
+    assert dialog.tag_label.minimumHeight() == dialog.tag_label.maximumHeight()
+    assert dialog.tag_label.height() >= dialog.tag_label.fontMetrics().lineSpacing() * 3
+    assert dialog.tag_status_list.minimumHeight() == 150
+    assert dialog.tag_status_list.maximumHeight() == 150
     decision_group = dialog.keep_button.parentWidget()
     navigation_group = dialog.back_button.parentWidget()
     session_group = dialog.finish_button.parentWidget()
@@ -1004,3 +1008,54 @@ def test_review_discard_button_closes_without_writing(
 
     assert dialog.result() == ReviewDialog.DialogCode.Rejected
     assert tag_path.read_bytes() == b"cat\n"
+
+
+def test_review_temporary_tags_are_kept_and_consumed(
+    qtbot, tmp_path: Path
+) -> None:
+    image_path = tmp_path / "sample.png"
+    tag_path = tmp_path / "sample.txt"
+    create_png(image_path)
+    tag_path.write_bytes(b"cat\n")
+    entry = ImageEntry(image_path, tag_path, ["cat"], b"cat\n")
+    dialog = ReviewDialog([entry])
+    qtbot.addWidget(dialog)
+
+    dialog.temporary_input.setText("new, cat")
+    assert dialog.temporary_add_button.isEnabled()
+    dialog.temporary_add_button.click()
+
+    assert dialog.temporary_input.text() == ""
+    assert dialog.session.current_tags == ["cat", "new"]
+    assert "new" in dialog.session.reviewed_tags[0]
+    assert "[kept] new" in [
+        dialog.tag_status_list.item(row).text()
+        for row in range(dialog.tag_status_list.count())
+    ]
+    assert tag_path.read_bytes() == b"cat\n"
+
+
+def test_review_finish_confirms_total_tag_deletions(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    image_path = tmp_path / "sample.png"
+    tag_path = tmp_path / "sample.txt"
+    create_png(image_path)
+    tag_path.write_bytes(b"cat, dog\n")
+    entry = ImageEntry(image_path, tag_path, ["cat", "dog"], b"cat, dog\n")
+    dialog = ReviewDialog([entry])
+    qtbot.addWidget(dialog)
+    dialog._delete()
+
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda _parent, _title, message, *_args: (
+            prompts.append(message) or QMessageBox.StandardButton.Cancel
+        ),
+    )
+    dialog._finish()
+
+    assert "delete 1 tag(s)" in prompts[0]
+    assert tag_path.read_bytes() == b"cat, dog\n"

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -22,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .domain import ImageEntry, ReviewSession
+from .domain import ImageEntry, ReviewSession, parse_tags
 from .preview import ImageView, PreviewLoader
 from .storage import BatchCommitResult, BatchPreflightError, WriteRequest, write_tags_batch
 
@@ -95,12 +96,30 @@ class ReviewDialog(QDialog):
             "QLabel { font-size: 28px; font-weight: 600; padding: 24px; "
             "color: #101828; background: #f2f4f7; }"
         )
+        self.tag_label.ensurePolished()
+        self.tag_label.setFixedHeight(
+            self.tag_label.fontMetrics().lineSpacing() * 3 + 48
+        )
         self.tag_status_list = QListWidget()
         self.tag_status_list.setSelectionMode(
             QListWidget.SelectionMode.NoSelection
         )
         self.tag_status_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.tag_status_list.setMaximumHeight(150)
+        self.tag_status_list.setFixedHeight(150)
+        self.temporary_input = QLineEdit()
+        self.temporary_input.setPlaceholderText("Comma-separated tags for this image")
+        self.temporary_input.setClearButtonEnabled(True)
+        self.temporary_input.textChanged.connect(self._update_temporary_button)
+        self.temporary_input.returnPressed.connect(self._append_temporary_tags)
+        self.temporary_add_button = QPushButton("+")
+        self.temporary_add_button.setFixedWidth(34)
+        self.temporary_add_button.setToolTip("Add tags to the current image and keep them")
+        self.temporary_add_button.clicked.connect(self._append_temporary_tags)
+        temporary_layout = QHBoxLayout()
+        temporary_layout.setContentsMargins(0, 0, 0, 0)
+        temporary_layout.setSpacing(8)
+        temporary_layout.addWidget(self.temporary_input, 1)
+        temporary_layout.addWidget(self.temporary_add_button)
         self.fit_action = QAction("Fit to Window", self)
         self.fit_action.setCheckable(True)
         self.fit_action.setChecked(True)
@@ -145,6 +164,8 @@ class ReviewDialog(QDialog):
         tag_panel_layout.addWidget(self.tag_label, 1)
         tag_panel_layout.addWidget(QLabel("Tag decisions"))
         tag_panel_layout.addWidget(self.tag_status_list)
+        tag_panel_layout.addWidget(QLabel("Temporary tags for this image"))
+        tag_panel_layout.addLayout(temporary_layout)
         tag_panel_layout.addLayout(scale_buttons)
         self.tag_panel = self._layout_widget(tag_panel_layout)
 
@@ -334,6 +355,7 @@ class ReviewDialog(QDialog):
 
     def _load_current(self) -> None:
         session = self.session
+        self.temporary_input.clear()
         self._update_tag_status()
         if session.finished:
             self.progress_label.setText(
@@ -375,8 +397,29 @@ class ReviewDialog(QDialog):
             self.tag_status_list.addItem(item)
             if tag == current_tag:
                 current_row = row
+        original_tags = set(session.current_item.original_tags)
+        for tag in session.current_tags:
+            if tag not in original_tags:
+                self.tag_status_list.addItem(QListWidgetItem(f"[kept] {tag}"))
         if current_row >= 0:
             self.tag_status_list.setCurrentRow(current_row)
+
+    def _update_temporary_button(self, *_args) -> None:
+        if self._session is None:
+            self.temporary_add_button.setEnabled(False)
+            return
+        self.temporary_add_button.setEnabled(
+            bool(parse_tags(self.temporary_input.text()))
+            and not self.session.finished
+        )
+
+    def _append_temporary_tags(self) -> None:
+        additions = self.session.add_kept_tags(parse_tags(self.temporary_input.text()))
+        if not additions:
+            return
+        self.temporary_input.clear()
+        self._update_tag_status()
+        self._update_buttons()
 
     def _preview_loaded(self, image, error: str) -> None:
         if error or image.isNull():
@@ -441,9 +484,21 @@ class ReviewDialog(QDialog):
         self.delete_button.setEnabled(not done)
         self.next_button.setEnabled(not done)
         self.finish_button.setEnabled(True)
+        self._update_temporary_button()
 
     def _finish(self) -> None:
         changes = self.session.staged_changes()
+        deleted_count = self.session.deleted_tag_count
+        if deleted_count:
+            answer = QMessageBox.question(
+                self,
+                "Confirm Tag Deletions",
+                f"This review will delete {deleted_count} tag(s).\n\nContinue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         if not changes:
             self.commit_result = BatchCommitResult([], {})
             self._allow_close = True

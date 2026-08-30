@@ -413,7 +413,19 @@ class ReviewSession:
 
     @property
     def reviewed_tag_count(self) -> int:
-        return sum(len(tags) for tags in self.reviewed_tags.values())
+        return sum(
+            sum(tag in self.reviewed_tags[index] for tag in item.original_tags)
+            for index, item in enumerate(self.items)
+        )
+
+    @property
+    def deleted_tag_count(self) -> int:
+        return sum(
+            1
+            for index, item in enumerate(self.items)
+            for tag in item.original_tags
+            if tag not in self.working_tags[index]
+        )
 
     @property
     def at_first(self) -> bool:
@@ -453,6 +465,15 @@ class ReviewSession:
         self.current_tag_index -= 1
         if not self._advance():
             self.completed = True
+
+    def add_kept_tags(self, tags: Sequence[str]) -> list[str]:
+        if self.completed or not self.items:
+            return []
+        current = self.working_tags[self.current_index]
+        additions = [tag for tag in unique_tags(tags) if tag not in current]
+        current.extend(additions)
+        self.reviewed_tags[self.current_index].update(additions)
+        return additions
 
     def move_back(self) -> bool:
         if self.completed:
