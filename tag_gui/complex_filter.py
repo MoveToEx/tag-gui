@@ -15,15 +15,16 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
-    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QPlainTextEdit,
+    QSplitter,
     QStyle,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from .domain import ImageEntry
@@ -144,16 +145,27 @@ class ComplexFilterDialog(QDialog):
         code_buttons = QHBoxLayout()
         code_buttons.addStretch(1)
         code_buttons.addWidget(self.run_button)
-        close_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        close_buttons.rejected.connect(self.reject)
+
+        code_panel = QWidget()
+        code_layout = QVBoxLayout(code_panel)
+        code_layout.addLayout(code_buttons)
+        code_layout.addWidget(self.code_input, 1)
+        code_layout.addWidget(self.error_label)
+
+        result_panel = QWidget()
+        result_layout = QVBoxLayout(result_panel)
+        result_layout.addWidget(self.result_label)
+        result_layout.addWidget(self.results, 1)
+
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(code_panel)
+        self.splitter.addWidget(result_panel)
+        self.splitter.setStretchFactor(0, 2)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([560, 290])
 
         layout = QVBoxLayout(self)
-        layout.addLayout(code_buttons)
-        layout.addWidget(self.code_input, 1)
-        layout.addWidget(self.error_label)
-        layout.addWidget(self.result_label)
-        layout.addWidget(self.results, 2)
-        layout.addWidget(close_buttons)
+        layout.addWidget(self.splitter)
 
     def run_filter(self) -> None:
         self.error_label.clear()
