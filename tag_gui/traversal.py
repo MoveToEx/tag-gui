@@ -176,8 +176,8 @@ class TraversalDialog(QDialog):
         folder_layout.setContentsMargins(0, 0, 0, 0)
         folder_layout.addWidget(
             QLabel(
-                "Check one or more folders whose images should be included. "
-                "Checking a folder also checks all of its subfolders."
+                "Check folders or individual images to include. "
+                "Checking a folder also checks all of its descendants."
             )
         )
         self.folder_tree = QTreeWidget()
@@ -271,6 +271,26 @@ class TraversalDialog(QDialog):
             item.setCheckState(0, Qt.CheckState.Unchecked)
             items[relative_folder.parent].addChild(item)
             items[relative_folder] = item
+        for entry in self._entries:
+            relative_parent = entry.image_path.parent.relative_to(root_directory)
+            parent_item = items[relative_parent]
+            image_item = QTreeWidgetItem([entry.image_path.name])
+            image_item.setFlags(
+                image_item.flags() | Qt.ItemFlag.ItemIsUserCheckable
+            )
+            image_item.setData(
+                0,
+                Qt.ItemDataRole.UserRole,
+                str(entry.image_path),
+            )
+            image_item.setData(
+                0,
+                Qt.ItemDataRole.UserRole + 1,
+                entry,
+            )
+            image_item.setToolTip(0, str(entry.image_path))
+            image_item.setCheckState(0, Qt.CheckState.Unchecked)
+            parent_item.addChild(image_item)
         self.folder_tree.expandAll()
         root_item.setCheckState(0, Qt.CheckState.Checked)
 
@@ -309,6 +329,10 @@ class TraversalDialog(QDialog):
                 if (child := item.child(index)) is not None
             ]
             if child_states and all(
+                state == Qt.CheckState.Checked for state in child_states
+            ):
+                state = Qt.CheckState.Checked
+            elif child_states and all(
                 state == Qt.CheckState.Unchecked for state in child_states
             ):
                 state = Qt.CheckState.Unchecked
@@ -317,29 +341,22 @@ class TraversalDialog(QDialog):
             item.setCheckState(0, state)
             item = item.parent()
 
-    def _checked_folders(self) -> list[Path]:
-        folders: list[Path] = []
+    def _checked_entries(self) -> list[ImageEntry]:
+        checked_paths: set[Path] = set()
         iterator = QTreeWidgetItemIterator(self.folder_tree)
         while iterator.value() is not None:
             item = iterator.value()
             if item.checkState(0) == Qt.CheckState.Checked:
-                value = item.data(0, Qt.ItemDataRole.UserRole)
-                if isinstance(value, str):
-                    folders.append(Path(value))
+                value = item.data(0, Qt.ItemDataRole.UserRole + 1)
+                if isinstance(value, ImageEntry):
+                    checked_paths.add(value.image_path)
             iterator += 1
-        return folders
+        return [
+            entry for entry in self._entries if entry.image_path in checked_paths
+        ]
 
     def _entries_in_checked_folders(self) -> list[ImageEntry]:
-        folders = self._checked_folders()
-        return [
-            entry
-            for entry in self._entries
-            if any(
-                entry.image_path.parent == folder
-                or folder in entry.image_path.parent.parents
-                for folder in folders
-            )
-        ]
+        return self._checked_entries()
 
     def _update_folder_selection(self) -> None:
         entries = self._entries_in_checked_folders()

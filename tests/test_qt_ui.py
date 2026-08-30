@@ -872,7 +872,7 @@ def test_traversal_folder_tree_combines_checked_subtrees(
     root_item = dialog.folder_tree.topLevelItem(0)
     assert root_item is not None
     assert root_item.text(0) == tmp_path.name
-    assert root_item.childCount() == 2
+    assert root_item.childCount() == 3
     nested_item = None
     for index in range(root_item.childCount()):
         child = root_item.child(index)
@@ -880,10 +880,13 @@ def test_traversal_folder_tree_combines_checked_subtrees(
             nested_item = child
             break
     assert nested_item is not None
-    assert nested_item.childCount() == 1
+    assert nested_item.childCount() == 2
     deep_item = nested_item.child(0)
     assert deep_item is not None
     assert deep_item.text(0) == "deep"
+    child_image = nested_item.child(1)
+    assert child_image is not None
+    assert child_image.text(0) == "child.png"
     other_item = None
     for index in range(root_item.childCount()):
         child = root_item.child(index)
@@ -898,6 +901,12 @@ def test_traversal_folder_tree_combines_checked_subtrees(
     root_item.setCheckState(0, Qt.CheckState.Unchecked)
     nested_item.setCheckState(0, Qt.CheckState.Checked)
     assert deep_item.checkState(0) == Qt.CheckState.Checked
+    assert child_image.checkState(0) == Qt.CheckState.Checked
+    child_image.setCheckState(0, Qt.CheckState.Unchecked)
+    assert dialog.folder_selection_label.text() == (
+        "1 matching image(s) will be included."
+    )
+    child_image.setCheckState(0, Qt.CheckState.Checked)
     assert dialog.folder_selection_label.text() == (
         "2 matching image(s) will be included."
     )
