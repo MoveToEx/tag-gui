@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .archive import ArchiveProgressDialog
 from .bulk_operation import BulkOperationDialog
 from .catalog import ImageCatalogModel
 from .complex_filter import ComplexFilterDialog
@@ -62,7 +63,6 @@ from .storage import (
     BatchPreflightError,
     ExternalChangeError,
     WriteRequest,
-    flatten_entries,
     scan_folder,
     write_tags_atomic,
     write_tags_batch,
@@ -85,6 +85,8 @@ class MainWindow(QMainWindow):
         self.settings = QSettings()
         self.directory: Path | None = None
         self._complex_filter_dialog: ComplexFilterDialog | None = None
+        self._archive_dialog: ArchiveProgressDialog | None = None
+        self._archive_destination: Path | None = None
 
         self.catalog = ImageCatalogModel(self)
         self.image_list = QTreeView()
@@ -199,16 +201,12 @@ class MainWindow(QMainWindow):
         self.rescan_action.setShortcut(QKeySequence("F5"))
         self.rescan_action.triggered.connect(self.rescan)
 
-        self.flatten_action = QAction("Flatten To...", self)
-        self.flatten_action.triggered.connect(self._flatten_folder)
+        self.archive_action = QAction("Archive...", self)
+        self.archive_action.triggered.connect(self._archive_folder)
 
         self.exit_action = QAction("Exit", self)
         self.exit_action.setShortcut(QKeySequence.StandardKey.Quit)
         self.exit_action.triggered.connect(self.close)
-
-        self.focus_search_action = QAction("Find Tag", self)
-        self.focus_search_action.setShortcut(QKeySequence.StandardKey.Find)
-        self.focus_search_action.triggered.connect(self._focus_tag_search)
 
         self.global_search_action = QAction("Global Tag Search...", self)
         self.global_search_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
@@ -285,7 +283,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.close_folder_action)
         file_menu.addAction(self.rescan_action)
         file_menu.addSeparator()
-        file_menu.addAction(self.flatten_action)
+        file_menu.addAction(self.archive_action)
         file_menu.addSeparator()
         file_menu.addAction(self.exit_action)
 
@@ -300,7 +298,6 @@ class MainWindow(QMainWindow):
         )
 
         tags_menu = self.menuBar().addMenu("&Tags")
-        tags_menu.addAction(self.focus_search_action)
         tags_menu.addAction(self.global_search_action)
         tags_menu.addAction(self.review_action)
         tags_menu.addAction(self.complex_filter_action)
@@ -320,8 +317,6 @@ class MainWindow(QMainWindow):
 
         toolbar = QToolBar("Main", self)
         toolbar.setMovable(False)
-        toolbar.addAction(self.open_action)
-        toolbar.addSeparator()
         toolbar.addAction(self.previous_action)
         toolbar.addAction(self.next_action)
         toolbar.addSeparator()
@@ -410,38 +405,52 @@ class MainWindow(QMainWindow):
             show_issues=True,
         )
 
-    def _flatten_folder(self) -> None:
+    def _archive_folder(self) -> None:
         if not self.catalog.entries:
             return
-        start = str(self.directory or "")
-        selected = QFileDialog.getExistingDirectory(
-            self, "Select Flatten Destination", start
+        directory = self.directory
+        start = (
+            directory / f"{directory.name}.zip"
+            if directory is not None
+            else Path("images.zip")
+        )
+        selected, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Archive Image and Tag Pairs",
+            str(start),
+            "Zip archives (*.zip)",
         )
         if not selected:
             return
         destination = Path(selected)
-        try:
-            result = flatten_entries(self.catalog.entries, destination)
-        except OSError as exc:
-            QMessageBox.critical(self, "Could Not Flatten Folder", str(exc))
-            return
+        if destination.suffix.casefold() != ".zip":
+            destination = Path(f"{destination}.zip")
+        dialog = ArchiveProgressDialog(
+            list(self.catalog.entries), destination, self
+        )
+        dialog.completed.connect(self._archive_completed)
+        dialog.failed.connect(self._archive_failed)
+        self._archive_dialog = dialog
+        self._archive_destination = destination
+        self._update_action_states()
+        dialog.show()
+        dialog.start()
 
-        copied_count = len(result.succeeded)
-        if result.failures:
-            details = "\n".join(
-                f"{path.name}: {message}"
-                for path, message in result.failures.items()
-            )
-            QMessageBox.warning(
-                self,
-                "Some Files Were Not Copied",
-                f"Copied {copied_count} image/tag pair(s).\n\n{details}",
-            )
-        else:
-            self.statusBar().showMessage(
-                f"Flattened {copied_count} image/tag pair(s) into {destination}.",
-                5000,
-            )
+    def _archive_completed(self, archived_count: int) -> None:
+        destination = self._archive_destination
+        self._archive_dialog = None
+        self._archive_destination = None
+        self._update_action_states()
+        self.statusBar().showMessage(
+            f"Archived {archived_count} image/tag pair(s) to {destination}.",
+            5000,
+        )
+
+    def _archive_failed(self, message: str) -> None:
+        self._archive_dialog = None
+        self._archive_destination = None
+        self._update_action_states()
+        QMessageBox.critical(self, "Could Not Create Archive", message)
 
     def _load_directory(
         self,
@@ -1088,9 +1097,10 @@ class MainWindow(QMainWindow):
         has_directory = self.directory is not None
         self.close_folder_action.setEnabled(has_directory)
         self.rescan_action.setEnabled(has_directory)
-        self.flatten_action.setEnabled(count > 0)
+        self.archive_action.setEnabled(
+            count > 0 and self._archive_dialog is None
+        )
         self.search_input.setEnabled(count > 0)
-        self.focus_search_action.setEnabled(count > 0)
         self.global_search_action.setEnabled(count > 0)
         self.review_action.setEnabled(count > 0 and any(entry.editable and entry.tags for entry in self.catalog.entries))
         self.complex_filter_action.setEnabled(count > 0)

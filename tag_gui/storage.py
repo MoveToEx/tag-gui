@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -35,14 +37,9 @@ class BatchCommitResult:
         return not self.failures
 
 
-@dataclass
-class FlattenResult:
-    succeeded: list[tuple[Path, Path]]
-    failures: dict[Path, str]
-
-    @property
-    def complete(self) -> bool:
-        return not self.failures
+@dataclass(frozen=True)
+class ArchiveResult:
+    archived: list[tuple[str, str]]
 
 
 @dataclass
@@ -213,39 +210,22 @@ def scan_folder(directory: Path, supported_extensions: Iterable[str]) -> ScanRes
     return result
 
 
-def _copy_exclusive(source: Path, destination: Path) -> None:
-    created = False
-    try:
-        with source.open("rb") as source_stream, destination.open("xb") as target_stream:
-            created = True
-            shutil.copyfileobj(source_stream, target_stream)
-        shutil.copystat(source, destination)
-    except Exception:
-        if created:
-            destination.unlink(missing_ok=True)
-        raise
-
-
-def flatten_entries(
-    entries: Sequence[ImageEntry], destination: Path
-) -> FlattenResult:
-    destination = Path(destination)
-    destination.mkdir(parents=True, exist_ok=True)
-    occupied_names = {
-        child.name.casefold() for child in destination.iterdir()
-    }
-    succeeded: list[tuple[Path, Path]] = []
-    failures: dict[Path, str] = {}
-
+def archive_entries(
+    entries: Sequence[ImageEntry],
+    destination: Path,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> ArchiveResult:
+    resolved: list[tuple[Path, str, Path, str]] = []
+    occupied_names: set[str] = set()
     for entry in entries:
         if not entry.image_path.is_file():
-            failures[entry.image_path] = "Image file does not exist."
-            continue
-        if not entry.tag_path.is_file():
-            failures[entry.image_path] = (
-                f"Tag file does not exist: {entry.tag_path.name}"
+            raise FileNotFoundError(
+                f"Image file does not exist: {entry.image_path}"
             )
-            continue
+        if not entry.tag_path.is_file():
+            raise FileNotFoundError(
+                f"Tag file does not exist: {entry.tag_path}"
+            )
 
         index = 0
         while True:
@@ -261,27 +241,53 @@ def flatten_entries(
                 break
             index += 1
 
-        image_target = destination / image_name
-        tag_target = destination / tag_name
-        image_created = False
-        tag_created = False
-        try:
-            _copy_exclusive(entry.image_path, image_target)
-            image_created = True
-            _copy_exclusive(entry.tag_path, tag_target)
-            tag_created = True
-        except OSError as exc:
-            if tag_created:
-                tag_target.unlink(missing_ok=True)
-            if image_created:
-                image_target.unlink(missing_ok=True)
-            failures[entry.image_path] = str(exc)
-            continue
-
         occupied_names.update(keys)
-        succeeded.append((image_target, tag_target))
+        resolved.append(
+            (entry.image_path, image_name, entry.tag_path, tag_name)
+        )
 
-    return FlattenResult(succeeded=succeeded, failures=failures)
+    destination = Path(destination)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            dir=destination.parent,
+            delete=False,
+        ) as stream:
+            temporary_path = Path(stream.name)
+
+        with zipfile.ZipFile(
+            temporary_path,
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED,
+            strict_timestamps=False,
+        ) as archive:
+            completed = 0
+            total = len(resolved) * 2
+            for image_path, image_name, tag_path, tag_name in resolved:
+                for source_path, archive_name in (
+                    (image_path, image_name),
+                    (tag_path, tag_name),
+                ):
+                    if progress is not None:
+                        progress(completed, total, archive_name)
+                    archive.write(source_path, archive_name)
+                    completed += 1
+                    if progress is not None:
+                        progress(completed, total, archive_name)
+
+        os.replace(temporary_path, destination)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+    return ArchiveResult(
+        archived=[
+            (image_name, tag_name)
+            for _image_path, image_name, _tag_path, tag_name in resolved
+        ]
+    )
 
 
 def _check_expected_bytes(path: Path, expected_bytes: bytes | None) -> None:

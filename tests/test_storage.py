@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import pytest
 
 from tag_gui.storage import (
+    archive_entries,
     BatchPreflightError,
     ExternalChangeError,
     WriteRequest,
-    flatten_entries,
     scan_folder,
     write_tags_atomic,
     write_tags_batch,
@@ -124,11 +125,11 @@ def test_invalid_utf8_sidecar_is_visible_but_read_only(tmp_path: Path) -> None:
     assert "UTF-8" in (entry.error or "")
 
 
-def test_flatten_entries_copies_nested_pairs_with_unique_stems(
+def test_archive_entries_stores_nested_pairs_with_unique_flat_names(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source"
-    destination = tmp_path / "destination"
+    destination = tmp_path / "archive.zip"
     first = source / "first"
     second = source / "second"
     first.mkdir(parents=True)
@@ -139,35 +140,79 @@ def test_flatten_entries_copies_nested_pairs_with_unique_stems(
     (second / "sample.txt").write_bytes(b"second tags\n")
     entries = scan_folder(source, IMAGE_EXTENSIONS).entries
 
-    result = flatten_entries(entries, destination)
+    result = archive_entries(entries, destination)
 
-    assert result.complete
-    assert [pair[0].name for pair in result.succeeded] == [
-        "sample.jpg",
-        "sample_1.jpg",
+    assert result.archived == [
+        ("sample.jpg", "sample.txt"),
+        ("sample_1.jpg", "sample_1.txt"),
     ]
-    assert (destination / "sample.txt").read_bytes() == b"first tags\n"
-    assert (destination / "sample_1.txt").read_bytes() == b"second tags\n"
+    with zipfile.ZipFile(destination) as archive:
+        assert archive.namelist() == [
+            "sample.jpg",
+            "sample.txt",
+            "sample_1.jpg",
+            "sample_1.txt",
+        ]
+        assert archive.read("sample.txt") == b"first tags\n"
+        assert archive.read("sample_1.txt") == b"second tags\n"
 
 
-def test_flatten_entries_renames_destination_conflicts(tmp_path: Path) -> None:
+def test_archive_entries_reports_current_file_and_progress(tmp_path: Path) -> None:
     source = tmp_path / "source"
-    destination = tmp_path / "destination"
     source.mkdir()
-    destination.mkdir()
+    touch_image(source / "sample.png")
+    (source / "sample.txt").write_bytes(b"tags\n")
+    entry = scan_folder(source, IMAGE_EXTENSIONS).entries[0]
+    progress: list[tuple[int, int, str]] = []
+
+    archive_entries(
+        [entry],
+        tmp_path / "archive.zip",
+        lambda completed, total, name: progress.append(
+            (completed, total, name)
+        ),
+    )
+
+    assert progress == [
+        (0, 2, "sample.png"),
+        (1, 2, "sample.png"),
+        (1, 2, "sample.txt"),
+        (2, 2, "sample.txt"),
+    ]
+
+
+def test_archive_entries_replaces_existing_archive_atomically(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "archive.zip"
+    source.mkdir()
     touch_image(source / "sample.png")
     (source / "sample.txt").write_bytes(b"new tags\n")
-    touch_image(destination / "sample.png")
-    (destination / "sample.txt").write_bytes(b"existing tags\n")
+    destination.write_bytes(b"old archive contents")
     entry = scan_folder(source, IMAGE_EXTENSIONS).entries[0]
 
-    result = flatten_entries([entry], destination)
+    result = archive_entries([entry], destination)
 
-    assert result.complete
-    assert (destination / "sample.png").read_bytes() == b"not decoded by scanner"
-    assert (destination / "sample.txt").read_bytes() == b"existing tags\n"
-    assert (destination / "sample_1.png").exists()
-    assert (destination / "sample_1.txt").read_bytes() == b"new tags\n"
+    assert result.archived == [("sample.png", "sample.txt")]
+    with zipfile.ZipFile(destination) as archive:
+        assert archive.read("sample.png") == b"not decoded by scanner"
+        assert archive.read("sample.txt") == b"new tags\n"
+
+
+def test_archive_entries_leaves_destination_unchanged_for_missing_pair(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    touch_image(source / "sample.png")
+    entry = scan_folder(source, IMAGE_EXTENSIONS).entries[0]
+    entry.tag_path.unlink()
+    destination = tmp_path / "archive.zip"
+    destination.write_bytes(b"existing archive")
+
+    with pytest.raises(FileNotFoundError, match="Tag file does not exist"):
+        archive_entries([entry], destination)
+
+    assert destination.read_bytes() == b"existing archive"
 
 
 def test_atomic_write_detects_external_change(tmp_path: Path) -> None:

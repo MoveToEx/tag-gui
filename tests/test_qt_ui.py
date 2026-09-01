@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import zipfile
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -14,6 +16,8 @@ from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QGuiApplication, 
 from PySide6.QtWidgets import QGroupBox, QMessageBox
 
 import tag_gui.main_window as main_window_module
+import tag_gui.archive as archive_module
+from tag_gui.storage import ArchiveResult
 from tag_gui.bulk_operation import BulkOperationDialog
 from tag_gui.domain import ImageEntry, TagOperation
 from tag_gui.complex_filter import ComplexFilterDialog
@@ -77,31 +81,79 @@ def test_navigation_actions_stop_at_boundaries(qtbot, tmp_path: Path) -> None:
     assert window.previous_action.isEnabled()
 
 
-def test_flatten_action_copies_open_folder_without_hierarchy(
+def test_archive_action_compresses_open_folder_without_hierarchy(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:
     source = tmp_path / "source"
     nested = source / "nested"
-    destination = tmp_path / "destination"
+    destination = tmp_path / "archive.zip"
     nested.mkdir(parents=True)
-    destination.mkdir()
     create_png(nested / "sample.png")
-    (nested / "sample.txt").write_text("cat\n", encoding="utf-8")
+    (nested / "sample.txt").write_bytes(b"cat\n")
     window = MainWindow()
     qtbot.addWidget(window)
     window._load_directory(source, show_issues=False)
     monkeypatch.setattr(
         main_window_module.QFileDialog,
-        "getExistingDirectory",
-        lambda *_args: str(destination),
+        "getSaveFileName",
+        lambda *_args: (str(destination), "Zip archives (*.zip)"),
     )
 
-    assert window.flatten_action.isEnabled()
-    window.flatten_action.trigger()
+    assert window.archive_action.text() == "Archive..."
+    assert window.archive_action.isEnabled()
+    window.archive_action.trigger()
 
-    assert (destination / "sample.png").exists()
-    assert (destination / "sample.txt").read_text(encoding="utf-8") == "cat\n"
-    assert "Flattened 1 image/tag pair" in window.statusBar().currentMessage()
+    assert window._archive_dialog is not None
+    assert window._archive_dialog.isVisible()
+    qtbot.waitUntil(lambda: destination.exists())
+    qtbot.waitUntil(lambda: window._archive_dialog is None)
+    with zipfile.ZipFile(destination) as archive:
+        assert archive.namelist() == ["sample.png", "sample.txt"]
+        assert archive.read("sample.txt") == b"cat\n"
+    assert "Archived 1 image/tag pair" in window.statusBar().currentMessage()
+
+
+def test_archive_progress_window_shows_current_file(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    create_png(source / "sample.png")
+    (source / "sample.txt").write_bytes(b"cat\n")
+    destination = tmp_path / "archive.zip"
+    release_worker = threading.Event()
+
+    def fake_archive_entries(entries, archive_path, progress):
+        progress(1, 2, "sample.png")
+        release_worker.wait(timeout=5)
+        progress(2, 2, "sample.txt")
+        return ArchiveResult([("sample.png", "sample.txt")])
+
+    monkeypatch.setattr(archive_module, "archive_entries", fake_archive_entries)
+    monkeypatch.setattr(
+        main_window_module.QFileDialog,
+        "getSaveFileName",
+        lambda *_args: (str(destination), "Zip archives (*.zip)"),
+    )
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(source, show_issues=False)
+
+    window.archive_action.trigger()
+    try:
+        qtbot.waitUntil(
+            lambda: window._archive_dialog is not None
+            and window._archive_dialog.current_file_label.text()
+            == "Archiving: sample.png"
+        )
+        assert window._archive_dialog is not None
+        assert window._archive_dialog.progress_bar.value() == 1
+        assert window._archive_dialog.progress_bar.maximum() == 2
+        assert not window.archive_action.isEnabled()
+    finally:
+        release_worker.set()
+
+    qtbot.waitUntil(lambda: window._archive_dialog is None)
 
 
 def test_image_context_delete_moves_image_and_tag_to_trash(
@@ -255,7 +307,7 @@ def test_close_folder_empties_program_state(qtbot, tmp_path: Path) -> None:
     assert window.statusBar().currentMessage() == ""
     assert not window.close_folder_action.isEnabled()
     assert not window.rescan_action.isEnabled()
-    assert not window.flatten_action.isEnabled()
+    assert not window.archive_action.isEnabled()
     assert not window.search_input.isEnabled()
     assert not window.tag_input.isEnabled()
     assert not window.bulk_operation_action.isEnabled()
