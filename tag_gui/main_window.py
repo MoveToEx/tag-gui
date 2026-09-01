@@ -45,6 +45,12 @@ from PySide6.QtWidgets import (
 )
 
 from .archive import ArchiveProgressDialog
+from .ai_tagger import (
+    AITaggingDialog,
+    ModelManagementDialog,
+    ai_dependencies_available,
+    missing_ai_dependencies,
+)
 from .bulk_operation import BulkOperationDialog
 from .catalog import ImageCatalogModel
 from .complex_filter import ComplexFilterDialog
@@ -67,6 +73,11 @@ from .storage import (
     write_tags_atomic,
     write_tags_batch,
 )
+from .tag_library import (
+    DownloadTagsDialog,
+    TagLibrary,
+    attach_tag_completer,
+)
 from .traversal import TraversalDialog
 
 
@@ -87,6 +98,7 @@ class MainWindow(QMainWindow):
         self._complex_filter_dialog: ComplexFilterDialog | None = None
         self._archive_dialog: ArchiveProgressDialog | None = None
         self._archive_destination: Path | None = None
+        self.tag_library = TagLibrary(parent=self)
 
         self.catalog = ImageCatalogModel(self)
         self.image_list = QTreeView()
@@ -139,6 +151,9 @@ class MainWindow(QMainWindow):
         self.tag_input.setPlaceholderText("Comma-separated tags")
         self.tag_input.setClearButtonEnabled(True)
         self.tag_input.returnPressed.connect(self._add_current_tags)
+        self.tag_completer = attach_tag_completer(
+            self.tag_input, self.tag_library
+        )
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search tags (* wildcard)")
@@ -148,6 +163,9 @@ class MainWindow(QMainWindow):
         self.search_input.setToolTip(
             "Search tags in the opened folder. Use * as a wildcard. "
             "Press Enter for the next match or Shift+Enter for the previous match."
+        )
+        self.search_completer = attach_tag_completer(
+            self.search_input, self.tag_library
         )
         self.search_input.installEventFilter(self)
 
@@ -222,6 +240,22 @@ class MainWindow(QMainWindow):
 
         self.bulk_operation_action = QAction("Bulk Operation...", self)
         self.bulk_operation_action.triggered.connect(self._open_bulk_operation)
+
+        self.download_tags_action = QAction("Manage Tag Library...", self)
+        self.download_tags_action.triggered.connect(self._download_tags)
+
+        self.model_management_action = QAction("Manage Tagging Model...", self)
+        self.model_management_action.triggered.connect(
+            self._open_model_management
+        )
+
+        self.ai_tagging_action = QAction("AI Tagging...", self)
+        self.ai_tagging_action.triggered.connect(self._open_ai_tagging)
+        missing = missing_ai_dependencies()
+        if missing:
+            message = "Install the ai-tagger dependency group: " + ", ".join(missing)
+            self.model_management_action.setToolTip(message)
+            self.ai_tagging_action.setToolTip(message)
 
         self.first_action = QAction("First", self)
         self.previous_action = QAction(
@@ -303,10 +337,16 @@ class MainWindow(QMainWindow):
         tags_menu.addAction(self.complex_filter_action)
         tags_menu.addAction(self.bulk_operation_action)
         tags_menu.addSeparator()
+        tags_menu.addAction(self.ai_tagging_action)
+        tags_menu.addSeparator()
         for action in self.folder_tag_actions.values():
             tags_menu.addAction(action)
         tags_menu.addSeparator()
         tags_menu.addAction(self.normalize_action)
+
+        resources_menu = self.menuBar().addMenu("&Resources")
+        resources_menu.addAction(self.download_tags_action)
+        resources_menu.addAction(self.model_management_action)
 
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.fit_action)
@@ -353,6 +393,7 @@ class MainWindow(QMainWindow):
         self.image_list.clearSelection()
         self.image_list.setCurrentIndex(QModelIndex())
         self.catalog.set_entries([])
+        self.tag_library.clear_folder_tags()
         self.image_view.clear_image("Open a folder to begin")
         self._set_image_info(None)
         self.tag_list.clear()
@@ -469,6 +510,7 @@ class MainWindow(QMainWindow):
         self._update_window_title()
         self.settings.setValue("last_directory", str(directory))
         self.catalog.set_entries(result.entries, directory)
+        self.tag_library.set_folder_entries(result.entries)
         self.image_list.expandAll()
 
         row = (
@@ -618,7 +660,11 @@ class MainWindow(QMainWindow):
     def _open_global_search(self) -> None:
         if not self.catalog.entries:
             return
-        GlobalTagSearchDialog(self.catalog.entries, self).exec()
+        GlobalTagSearchDialog(
+            self.catalog.entries,
+            self,
+            tag_library=self.tag_library,
+        ).exec()
 
     def _open_review(self) -> None:
         if not self.catalog.entries or self.directory is None:
@@ -627,6 +673,7 @@ class MainWindow(QMainWindow):
             self.catalog.entries,
             self,
             root_directory=self.directory,
+            tag_library=self.tag_library,
         )
         if dialog.exec() == ReviewDialog.DialogCode.Accepted and dialog.commit_result:
             current = self._current_entry()
@@ -672,11 +719,44 @@ class MainWindow(QMainWindow):
             editable_entries,
             self,
             root_directory=self.directory,
+            tag_library=self.tag_library,
         )
         if (
             dialog.exec() == BulkOperationDialog.DialogCode.Accepted
             and self.directory is not None
         ):
+            self._load_directory(
+                self.directory,
+                preferred_image=current.image_path if current else None,
+                show_issues=False,
+            )
+
+    def _download_tags(self) -> None:
+        dialog = DownloadTagsDialog(self)
+        dialog.library_changed.connect(
+            lambda _path: self.tag_library.reload_danbooru()
+        )
+        dialog.exec()
+
+    def _open_model_management(self) -> None:
+        if ai_dependencies_available():
+            ModelManagementDialog(self).exec()
+
+    def _open_ai_tagging(self) -> None:
+        if not ai_dependencies_available() or self.directory is None:
+            return
+        editable_entries = [
+            entry for entry in self.catalog.entries if entry.editable
+        ]
+        if not editable_entries:
+            return
+        current = self._current_entry()
+        dialog = AITaggingDialog(
+            editable_entries,
+            self,
+            root_directory=self.directory,
+        )
+        if dialog.exec() == AITaggingDialog.DialogCode.Accepted:
             self._load_directory(
                 self.directory,
                 preferred_image=current.image_path if current else None,
@@ -1013,6 +1093,7 @@ class MainWindow(QMainWindow):
             operation,
             parent=self,
             root_directory=self.directory,
+            tag_library=self.tag_library,
         )
         if dialog.exec() == TraversalDialog.DialogCode.Accepted and self.directory:
             self._load_directory(
@@ -1135,6 +1216,9 @@ class MainWindow(QMainWindow):
             button.setEnabled(editable)
         any_editable = any(entry.editable for entry in self.catalog.entries)
         self.bulk_operation_action.setEnabled(any_editable)
+        ai_available = ai_dependencies_available()
+        self.model_management_action.setEnabled(ai_available)
+        self.ai_tagging_action.setEnabled(ai_available and any_editable)
         for action in self.folder_tag_actions.values():
             action.setEnabled(any_editable)
         self.normalize_action.setEnabled(any_editable)

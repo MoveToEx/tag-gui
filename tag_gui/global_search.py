@@ -20,11 +20,16 @@ from PySide6.QtWidgets import (
 )
 
 from .domain import ImageEntry, matching_tag_counts
+from .tag_library import TagLibrary, attach_tag_completer
 
 
 class GlobalTagSearchDialog(QDialog):
     def __init__(
-        self, entries: Sequence[ImageEntry], parent: QWidget | None = None
+        self,
+        entries: Sequence[ImageEntry],
+        parent: QWidget | None = None,
+        *,
+        tag_library: TagLibrary | None = None,
     ) -> None:
         super().__init__(parent)
         self.entries = list(entries)
@@ -36,6 +41,9 @@ class GlobalTagSearchDialog(QDialog):
         self.pattern_input.setClearButtonEnabled(True)
         self.pattern_input.setToolTip(
             "Matching is case-sensitive. Use * to match any sequence of characters."
+        )
+        self.pattern_completer = attach_tag_completer(
+            self.pattern_input, tag_library
         )
         self.search_button = QPushButton("Search")
         self.pattern_input.returnPressed.connect(self.search)

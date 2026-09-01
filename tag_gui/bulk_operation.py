@@ -40,6 +40,7 @@ from .storage import (
     WriteRequest,
     write_tags_batch,
 )
+from .tag_library import TagLibrary, attach_plain_text_tag_completer
 
 
 DEFAULT_PROCESS_CODE = "def process(fn: str, tags: set[str]) -> set[str]:\n\treturn tags"
@@ -68,10 +69,12 @@ class BulkOperationDialog(QDialog):
         parent=None,
         *,
         root_directory: Path,
+        tag_library: TagLibrary | None = None,
     ) -> None:
         super().__init__(parent)
         self._entries = [entry for entry in entries if entry.editable]
         self._root_directory = root_directory
+        self._tag_library = tag_library
         self._updating_checks = False
         self._changes: list[BulkChange] = []
         self._current_index = 0
@@ -180,6 +183,9 @@ class BulkOperationDialog(QDialog):
         self.new_tags_input.setPlaceholderText("Comma-separated tags")
         self.new_tags_input.setMaximumHeight(100)
         self.new_tags_input.textChanged.connect(self._update_changes_text)
+        self.new_tags_completer = attach_plain_text_tag_completer(
+            self.new_tags_input, self._tag_library
+        )
 
         details_layout = QVBoxLayout()
         details_layout.setContentsMargins(12, 0, 0, 0)

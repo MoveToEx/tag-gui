@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from .domain import ImageEntry, ReviewSession, parse_tags
 from .preview import ImageView, PreviewLoader
 from .storage import BatchCommitResult, BatchPreflightError, WriteRequest, write_tags_batch
+from .tag_library import TagLibrary, attach_tag_completer
 
 
 def _folder_ancestors(path: Path) -> list[Path]:
@@ -43,6 +44,7 @@ class ReviewDialog(QDialog):
         parent=None,
         *,
         root_directory: Path | None = None,
+        tag_library: TagLibrary | None = None,
     ) -> None:
         super().__init__(parent)
         self._entries = entries
@@ -110,6 +112,9 @@ class ReviewDialog(QDialog):
         self.temporary_input.setClearButtonEnabled(True)
         self.temporary_input.textChanged.connect(self._update_temporary_button)
         self.temporary_input.returnPressed.connect(self._append_temporary_tags)
+        self.temporary_completer = attach_tag_completer(
+            self.temporary_input, tag_library
+        )
         self.temporary_add_button = QPushButton("+")
         self.temporary_add_button.setFixedWidth(34)
         self.temporary_add_button.setToolTip("Add tags to the current image and keep them")

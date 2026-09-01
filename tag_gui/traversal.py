@@ -39,6 +39,7 @@ from .storage import (
     WriteRequest,
     write_tags_batch,
 )
+from .tag_library import TagLibrary, attach_tag_completer
 
 
 def _folder_ancestors(path: Path) -> list[Path]:
@@ -56,6 +57,7 @@ class TraversalDialog(QDialog):
         parent=None,
         *,
         root_directory: Path | None = None,
+        tag_library: TagLibrary | None = None,
     ) -> None:
         super().__init__(parent)
         self._entries = entries
@@ -118,6 +120,9 @@ class TraversalDialog(QDialog):
         self.temporary_input.setClearButtonEnabled(True)
         self.temporary_input.textChanged.connect(self._update_temporary_button)
         self.temporary_input.returnPressed.connect(self._append_temporary_tags)
+        self.temporary_completer = attach_tag_completer(
+            self.temporary_input, tag_library
+        )
         self.temporary_add_button = QPushButton("+")
         self.temporary_add_button.setToolTip(
             "Append these tags to the current image operation"
@@ -194,6 +199,9 @@ class TraversalDialog(QDialog):
         self.tag_input.setClearButtonEnabled(True)
         self.tag_input.textChanged.connect(self._update_folder_selection)
         self.tag_input.returnPressed.connect(self._start_selected_folder)
+        self.tag_completer = attach_tag_completer(
+            self.tag_input, tag_library
+        )
         folder_layout.addWidget(self.tag_input)
         self.folder_selection_label = QLabel()
         folder_layout.addWidget(self.folder_selection_label)
