@@ -154,10 +154,10 @@ class MainWindow(QMainWindow):
         self.add_tag_button = QPushButton("+")
         self.add_tag_button.setToolTip("Add these tags to the current image")
         self.add_tag_button.setFixedWidth(34)
-        delete_button = QPushButton("Delete Selected")
+        self.delete_tag_button = QPushButton("Delete Selected")
         self.add_tag_button.clicked.connect(self._add_current_tags)
-        delete_button.clicked.connect(self._delete_selected_tags)
-        self.inline_buttons = [self.add_tag_button, delete_button]
+        self.delete_tag_button.clicked.connect(self._delete_selected_tags)
+        self.inline_buttons = [self.add_tag_button, self.delete_tag_button]
 
         input_buttons = QHBoxLayout()
         input_buttons.setContentsMargins(0, 0, 0, 0)
@@ -170,7 +170,7 @@ class MainWindow(QMainWindow):
         tag_layout.addWidget(QLabel("Current tags"))
         tag_layout.addWidget(self.tag_list, 1)
         tag_layout.addLayout(input_buttons)
-        tag_layout.addWidget(delete_button)
+        tag_layout.addWidget(self.delete_tag_button)
         tag_panel.setMinimumWidth(280)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -919,6 +919,19 @@ class MainWindow(QMainWindow):
         if not requested:
             self.statusBar().showMessage("Select one or more tags to delete.", 4000)
             return
+        entry = self._current_entry()
+        if entry is None or not entry.editable:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete Selected Tags?",
+            f"Delete {len(requested)} selected tag(s) from "
+            f"{entry.image_path.name}?\n\n{', '.join(requested)}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
         self._apply_current_operation(TagOperation.DELETE, requested)
 
     def _selected_tag_text(self) -> str:
@@ -941,6 +954,10 @@ class MainWindow(QMainWindow):
             self.tag_list.clearSelection()
             item.setSelected(True)
 
+        menu = self._create_tag_context_menu()
+        menu.exec(self.tag_list.viewport().mapToGlobal(position))
+
+    def _create_tag_context_menu(self) -> QMenu:
         copy_action = QAction("Copy Selected Tags", self)
         copy_action.setEnabled(bool(self._selected_tag_text()))
         copy_action.triggered.connect(self._copy_selected_tags)
@@ -950,7 +967,7 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.addAction(copy_action)
         menu.addAction(delete_action)
-        menu.exec(self.tag_list.viewport().mapToGlobal(position))
+        return menu
 
     def _apply_current_operation(
         self, operation: TagOperation, requested_tags: list[str]
