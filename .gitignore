@@ -19,4 +19,4 @@ pytest-cache-files-*/
 
 # Local data
 data/danbooru_tags.csv
-data/settings.ini
+data/settings.json

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import base64
+import json
+import os
+import tempfile
 from typing import cast
 
-from PySide6.QtCore import QSettings, Qt
+from pathlib import Path
+
+from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -10,7 +16,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QPushButton,
+    QStyle,
     QStackedWidget,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -28,9 +36,113 @@ UNDERSCORES_SETTING = "tag_library/transform_underscores_to_spaces"
 PARENTHESES_SETTING = "tag_library/escape_parentheses"
 
 
-def create_app_settings() -> QSettings:
+def _stabilize_checkbox(checkbox: QCheckBox) -> None:
+    indicator_size = checkbox.style().pixelMetric(
+        QStyle.PixelMetric.PM_IndicatorWidth, None, checkbox
+    )
+    checkbox.setStyleSheet(
+        "QCheckBox::indicator { "
+        f"width: {indicator_size}px; height: {indicator_size}px; "
+        "}"
+    )
+    checkbox.setSizePolicy(
+        QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+    )
+    checkbox.setFixedHeight(checkbox.sizeHint().height())
+
+
+class JsonSettings:
+    """Small settings store backed by a JSON object."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._values: dict[str, object] = {}
+        try:
+            with path.open("r", encoding="utf-8") as stream:
+                data = json.load(stream)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            data = {}
+        if isinstance(data, dict):
+            self._values = data
+
+    def value(
+        self,
+        key: str,
+        default: object = None,
+        *,
+        type: type | None = None,
+    ) -> object:
+        value = _decode_value(self._values.get(key, default))
+        if type is None or value is None:
+            return value
+        if type is bool:
+            if isinstance(value, str):
+                return value.casefold() in {"1", "true", "yes", "on"}
+            return bool(value)
+        try:
+            return type(value)
+        except (TypeError, ValueError):
+            return default
+
+    def setValue(self, key: str, value: object) -> None:
+        self._values[key] = _encode_value(value)
+
+    def sync(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{self.path.name}.",
+            suffix=".tmp",
+            dir=self.path.parent,
+            text=True,
+        )
+        try:
+            with os.fdopen(
+                file_descriptor, "w", encoding="utf-8", newline="\n"
+            ) as stream:
+                json.dump(self._values, stream, indent=2, sort_keys=True)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_name, self.path)
+        except BaseException:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+            raise
+
+    def fileName(self) -> str:
+        return str(self.path)
+
+
+def _encode_value(value: object) -> object:
+    if isinstance(value, QByteArray):
+        return {
+            "__type__": "QByteArray",
+            "value": base64.b64encode(value.data()).decode("ascii"),
+        }
+    if isinstance(value, dict):
+        return {str(key): _encode_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_encode_value(item) for item in value]
+    return value
+
+
+def _decode_value(value: object) -> object:
+    if isinstance(value, dict):
+        if value.get("__type__") == "QByteArray":
+            encoded = value.get("value", "")
+            if isinstance(encoded, str):
+                return QByteArray.fromBase64(encoded.encode("ascii"))
+        return {key: _decode_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode_value(item) for item in value]
+    return value
+
+
+def create_app_settings() -> JsonSettings:
     ensure_data_directory()
-    return QSettings(str(SETTINGS_PATH), QSettings.Format.IniFormat)
+    return JsonSettings(SETTINGS_PATH)
 
 
 class SettingsDialog(QDialog):
@@ -38,7 +150,7 @@ class SettingsDialog(QDialog):
         self,
         parent: QWidget | None = None,
         *,
-        settings: QSettings | None = None,
+        settings: JsonSettings | None = None,
         tag_library: TagLibrary | None = None,
     ) -> None:
         super().__init__(parent)
@@ -112,6 +224,8 @@ class SettingsDialog(QDialog):
         self.parentheses_checkbox = QCheckBox(
             r"Add '\' before parentheses"
         )
+        _stabilize_checkbox(self.underscores_checkbox)
+        _stabilize_checkbox(self.parentheses_checkbox)
         self.underscores_checkbox.setChecked(
             cast(
                 bool,

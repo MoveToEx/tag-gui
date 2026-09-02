@@ -854,7 +854,7 @@ wheels = [
 ]
 
 [[package]]
-name = "tag-gui"
+name = "tagger"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

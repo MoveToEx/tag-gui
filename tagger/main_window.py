@@ -10,6 +10,7 @@ from PySide6.QtCore import (
     QItemSelectionModel,
     QModelIndex,
     QObject,
+    QByteArray,
     Qt,
 )
 from PySide6.QtGui import (
@@ -1233,10 +1234,12 @@ class MainWindow(QMainWindow):
 
     def _restore_settings(self) -> None:
         geometry = self.settings.value("main_geometry")
-        if geometry:
+        if isinstance(geometry, (QByteArray, bytes, bytearray, memoryview)):
             self.restoreGeometry(geometry)
         splitter_state = self.settings.value("splitter_state")
-        if splitter_state:
+        if isinstance(
+            splitter_state, (QByteArray, bytes, bytearray, memoryview)
+        ):
             self.splitter.restoreState(splitter_state)
         fit = cast(bool, self.settings.value("fit_to_window", True, type=bool))
         self.fit_action.setChecked(fit)
