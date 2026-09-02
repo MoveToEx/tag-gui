@@ -17,5 +17,6 @@ htmlcov/
 .pytest-tmp*/
 pytest-cache-files-*/
 
-# Downloaded tag index
-danbooru_tags.csv
+# Local data
+data/danbooru_tags.csv
+data/settings.ini

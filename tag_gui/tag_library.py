@@ -29,10 +29,10 @@ from PySide6.QtWidgets import (
 )
 
 from .domain import ImageEntry
+from .paths import PROJECT_ROOT, TAG_LIBRARY_PATH
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_TAG_LIBRARY_PATH = PROJECT_ROOT / "danbooru_tags.csv"
+DEFAULT_TAG_LIBRARY_PATH = TAG_LIBRARY_PATH
 DATASET_ID = "qdlabs/danbooru-tags"
 DATASET_TAGS_URL = (
     f"https://huggingface.co/datasets/{DATASET_ID}/resolve/main/tags.jsonl"
@@ -41,6 +41,19 @@ DATASET_TAGS_URL = (
 
 def _search_key(tag: str) -> str:
     return tag.strip().casefold().replace(" ", "_")
+
+
+def transform_tag_name(
+    name: str,
+    *,
+    underscores_to_spaces: bool = False,
+    escape_parentheses: bool = False,
+) -> str:
+    if underscores_to_spaces:
+        name = name.replace("_", " ")
+    if escape_parentheses:
+        name = name.replace("(", r"\(").replace(")", r"\)")
+    return name
 
 
 def pending_tag(text: str) -> str:
@@ -59,9 +72,14 @@ class TagLibrary(QObject):
         self,
         csv_path: Path = DEFAULT_TAG_LIBRARY_PATH,
         parent: QObject | None = None,
+        *,
+        underscores_to_spaces: bool = False,
+        escape_parentheses: bool = False,
     ) -> None:
         super().__init__(parent)
         self.csv_path = csv_path
+        self.underscores_to_spaces = underscores_to_spaces
+        self.escape_parentheses = escape_parentheses
         self._danbooru: dict[str, tuple[str, int]] = {}
         self._folder: dict[str, tuple[str, int]] = {}
         self._ranked: list[tuple[str, str, int]] = []
@@ -81,7 +99,11 @@ class TagLibrary(QObject):
                     ("post_count", "count", "posts", "tag_count"),
                 )
                 for row in reader:
-                    name = (row.get(name_field) or "").strip()
+                    name = transform_tag_name(
+                        (row.get(name_field) or "").strip(),
+                        underscores_to_spaces=self.underscores_to_spaces,
+                        escape_parentheses=self.escape_parentheses,
+                    )
                     if not name:
                         continue
                     try:
@@ -97,6 +119,18 @@ class TagLibrary(QObject):
         self._danbooru = records
         self._rebuild_index()
         self.changed.emit()
+
+    def set_transform_options(
+        self, *, underscores_to_spaces: bool, escape_parentheses: bool
+    ) -> None:
+        changed = (
+            self.underscores_to_spaces != underscores_to_spaces
+            or self.escape_parentheses != escape_parentheses
+        )
+        self.underscores_to_spaces = underscores_to_spaces
+        self.escape_parentheses = escape_parentheses
+        if changed:
+            self.reload_danbooru()
 
     def set_folder_entries(self, entries: Iterable[ImageEntry]) -> None:
         counts = Counter(tag for entry in entries for tag in entry.tags)

@@ -10,7 +10,6 @@ from PySide6.QtCore import (
     QItemSelectionModel,
     QModelIndex,
     QObject,
-    QSettings,
     Qt,
 )
 from PySide6.QtGui import (
@@ -47,7 +46,6 @@ from PySide6.QtWidgets import (
 from .archive import ArchiveProgressDialog
 from .ai_tagger import (
     AITaggingDialog,
-    ModelManagementDialog,
     ai_dependencies_available,
     missing_ai_dependencies,
 )
@@ -65,6 +63,7 @@ from .domain import (
 from .global_search import GlobalTagSearchDialog
 from .preview import ImageView, PreviewLoader
 from .review import ReviewDialog
+from .settings import SettingsDialog, create_app_settings
 from .storage import (
     BatchPreflightError,
     ExternalChangeError,
@@ -74,7 +73,6 @@ from .storage import (
     write_tags_batch,
 )
 from .tag_library import (
-    DownloadTagsDialog,
     TagLibrary,
     attach_tag_completer,
 )
@@ -93,12 +91,28 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Image Tagger")
         self.resize(1200, 760)
         self.setAcceptDrops(True)
-        self.settings = QSettings()
+        self.settings = create_app_settings()
         self.directory: Path | None = None
         self._complex_filter_dialog: ComplexFilterDialog | None = None
         self._archive_dialog: ArchiveProgressDialog | None = None
         self._archive_destination: Path | None = None
-        self.tag_library = TagLibrary(parent=self)
+        self.tag_library = TagLibrary(
+            parent=self,
+            underscores_to_spaces=cast(
+                bool,
+                self.settings.value(
+                    "tag_library/transform_underscores_to_spaces",
+                    False,
+                    type=bool,
+                ),
+            ),
+            escape_parentheses=cast(
+                bool,
+                self.settings.value(
+                    "tag_library/escape_parentheses", False, type=bool
+                ),
+            ),
+        )
 
         self.catalog = ImageCatalogModel(self)
         self.image_list = QTreeView()
@@ -241,20 +255,14 @@ class MainWindow(QMainWindow):
         self.bulk_operation_action = QAction("Bulk Operation...", self)
         self.bulk_operation_action.triggered.connect(self._open_bulk_operation)
 
-        self.download_tags_action = QAction("Manage Tag Library...", self)
-        self.download_tags_action.triggered.connect(self._download_tags)
-
-        self.model_management_action = QAction("Manage Tagging Model...", self)
-        self.model_management_action.triggered.connect(
-            self._open_model_management
-        )
+        self.settings_action = QAction("Settings...", self)
+        self.settings_action.triggered.connect(self._open_settings)
 
         self.ai_tagging_action = QAction("AI Tagging...", self)
         self.ai_tagging_action.triggered.connect(self._open_ai_tagging)
         missing = missing_ai_dependencies()
         if missing:
             message = "Install the ai-tagger dependency group: " + ", ".join(missing)
-            self.model_management_action.setToolTip(message)
             self.ai_tagging_action.setToolTip(message)
 
         self.first_action = QAction("First", self)
@@ -319,6 +327,8 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.archive_action)
         file_menu.addSeparator()
+        file_menu.addAction(self.settings_action)
+        file_menu.addSeparator()
         file_menu.addAction(self.exit_action)
 
         navigate_menu = self.menuBar().addMenu("&Navigate")
@@ -343,10 +353,6 @@ class MainWindow(QMainWindow):
             tags_menu.addAction(action)
         tags_menu.addSeparator()
         tags_menu.addAction(self.normalize_action)
-
-        resources_menu = self.menuBar().addMenu("&Resources")
-        resources_menu.addAction(self.download_tags_action)
-        resources_menu.addAction(self.model_management_action)
 
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.fit_action)
@@ -731,16 +737,12 @@ class MainWindow(QMainWindow):
                 show_issues=False,
             )
 
-    def _download_tags(self) -> None:
-        dialog = DownloadTagsDialog(self)
-        dialog.library_changed.connect(
-            lambda _path: self.tag_library.reload_danbooru()
-        )
-        dialog.exec()
-
-    def _open_model_management(self) -> None:
-        if ai_dependencies_available():
-            ModelManagementDialog(self).exec()
+    def _open_settings(self) -> None:
+        SettingsDialog(
+            self,
+            settings=self.settings,
+            tag_library=self.tag_library,
+        ).exec()
 
     def _open_ai_tagging(self) -> None:
         if not ai_dependencies_available() or self.directory is None:
@@ -1217,7 +1219,6 @@ class MainWindow(QMainWindow):
         any_editable = any(entry.editable for entry in self.catalog.entries)
         self.bulk_operation_action.setEnabled(any_editable)
         ai_available = ai_dependencies_available()
-        self.model_management_action.setEnabled(ai_available)
         self.ai_tagging_action.setEnabled(ai_available and any_editable)
         for action in self.folder_tag_actions.values():
             action.setEnabled(any_editable)
@@ -1246,4 +1247,5 @@ class MainWindow(QMainWindow):
         self.settings.setValue("main_geometry", self.saveGeometry())
         self.settings.setValue("splitter_state", self.splitter.saveState())
         self.settings.setValue("fit_to_window", self.fit_action.isChecked())
+        self.settings.sync()
         super().closeEvent(event)
