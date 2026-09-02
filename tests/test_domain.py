@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tag_gui.domain import (
+from tagger.domain import (
     ImageEntry,
     ReviewSession,
     TagOperation,

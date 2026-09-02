@@ -1,4 +1,4 @@
-from tag_gui.app import main
+from tagger.app import main
 
 
 if __name__ == "__main__":

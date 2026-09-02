@@ -1,5 +1,5 @@
 [project]
-name = "tag-gui"
+name = "tagger"
 version = "0.1.0"
 description = "A Qt desktop application for editing image tag sidecars"
 readme = "README.md"

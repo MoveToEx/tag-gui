@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tag_gui.storage import (
+from tagger.storage import (
     archive_entries,
     BatchPreflightError,
     ExternalChangeError,

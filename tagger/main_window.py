@@ -88,7 +88,7 @@ def move_to_trash(path: Path) -> bool:
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Image Tagger")
+        self.setWindowTitle("Tagger")
         self.resize(1200, 760)
         self.setAcceptDrops(True)
         self.settings = create_app_settings()

@@ -15,17 +15,17 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QGuiApplication, QImage
 from PySide6.QtWidgets import QGroupBox, QMessageBox
 
-import tag_gui.main_window as main_window_module
-import tag_gui.archive as archive_module
-from tag_gui.storage import ArchiveResult
-from tag_gui.bulk_operation import BulkOperationDialog
-from tag_gui.domain import ImageEntry, TagOperation
-from tag_gui.complex_filter import ComplexFilterDialog
-from tag_gui.main_window import MainWindow
-from tag_gui.global_search import GlobalTagSearchDialog
-from tag_gui.preview import PreviewLoader
-from tag_gui.review import ReviewDialog
-from tag_gui.traversal import TraversalDialog
+import tagger.main_window as main_window_module
+import tagger.archive as archive_module
+from tagger.storage import ArchiveResult
+from tagger.bulk_operation import BulkOperationDialog
+from tagger.domain import ImageEntry, TagOperation
+from tagger.complex_filter import ComplexFilterDialog
+from tagger.main_window import MainWindow
+from tagger.global_search import GlobalTagSearchDialog
+from tagger.preview import PreviewLoader
+from tagger.review import ReviewDialog
+from tagger.traversal import TraversalDialog
 
 
 def create_png(path: Path, color: str = "#2f6fed") -> None:
