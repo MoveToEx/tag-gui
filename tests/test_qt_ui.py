@@ -12,7 +12,14 @@ from PySide6.QtCore import (
     Qt,
     QUrl,
 )
-from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QGuiApplication, QImage
+from PySide6.QtGui import (
+    QColor,
+    QDragEnterEvent,
+    QDropEvent,
+    QGuiApplication,
+    QImage,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import QGroupBox, QMessageBox, QTreeWidget
 
 import tagger.main_window as main_window_module
@@ -23,7 +30,7 @@ from tagger.domain import ImageEntry, TagOperation
 from tagger.complex_filter import ComplexFilterDialog
 from tagger.main_window import MainWindow
 from tagger.global_search import GlobalTagSearchDialog
-from tagger.preview import PreviewLoader
+from tagger.preview import ImageView, PreviewLoader
 from tagger.review import ReviewDialog
 from tagger.settings import (
     JsonSettings,
@@ -581,6 +588,41 @@ def test_close_folder_empties_program_state(qtbot, tmp_path: Path) -> None:
     assert not window.search_input.isEnabled()
     assert not window.tag_input.isEnabled()
     assert not window.bulk_operation_action.isEnabled()
+
+
+def test_image_view_ctrl_wheel_zoom_and_drag_pan(qtbot) -> None:
+    view = ImageView()
+    qtbot.addWidget(view)
+    image = QImage(800, 600, QImage.Format.Format_RGB32)
+    image.fill(QColor("#2f6fed"))
+    view.resize(400, 300)
+    view.set_image(image)
+    view.show()
+    qtbot.waitExposed(view)
+
+    assert view.fit_to_window
+    initial_size = view._label.size()
+    wheel = QWheelEvent(
+        view.viewport().rect().center(),
+        view.viewport().mapToGlobal(view.viewport().rect().center()),
+        QPoint(0, 0),
+        QPoint(0, 120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.ControlModifier,
+        Qt.ScrollPhase.ScrollUpdate,
+        False,
+    )
+    QGuiApplication.sendEvent(view.viewport(), wheel)
+
+    assert not view.fit_to_window
+    assert view._label.width() > initial_size.width()
+    scroll_before_drag = view.horizontalScrollBar().value()
+
+    qtbot.mousePress(view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(200, 150))
+    qtbot.mouseMove(view.viewport(), QPoint(150, 150))
+    qtbot.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(150, 150))
+
+    assert view.horizontalScrollBar().value() > scroll_before_drag
 
 
 def test_close_folder_allows_another_folder_drop(qtbot, tmp_path: Path) -> None:

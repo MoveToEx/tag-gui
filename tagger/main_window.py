@@ -308,6 +308,7 @@ class MainWindow(QMainWindow):
         self.fit_action.setChecked(True)
         self.fit_action.setShortcut(QKeySequence("Ctrl+0"))
         self.fit_action.toggled.connect(self.image_view.set_fit_to_window)
+        self.image_view.fit_to_window_changed.connect(self.fit_action.setChecked)
 
         self.actual_size_action = QAction("Actual Size", self)
         self.actual_size_action.setShortcut(QKeySequence("Ctrl+1"))

@@ -42,8 +42,8 @@ from .tag_library import (
 )
 
 
-UNDERSCORES_SETTING = "tag_library/transform_underscores_to_spaces"
-PARENTHESES_SETTING = "tag_library/escape_parentheses"
+UNDERSCORES_SETTING = "autocomplete/transform_underscores_to_spaces"
+PARENTHESES_SETTING = "autocomplete/escape_parentheses"
 PROXY_SETTING = "network/http_proxy"
 PROXY_MODE_SETTING = "network/proxy_mode"
 NO_PROXY = "none"
@@ -240,17 +240,17 @@ class SettingsDialog(QDialog):
 
         self.models_page = self._create_models_page()
         self.tag_library_dialog: DownloadTagsDialog | None = None
-        self.tag_library_page = self._create_tag_library_page()
+        self.autocomplete_page = self._create_autocomplete_page()
         self.proxy_page = self._create_proxy_page()
         self.pages.addWidget(self.models_page)
-        self.pages.addWidget(self.tag_library_page)
+        self.pages.addWidget(self.autocomplete_page)
         self.pages.addWidget(self.proxy_page)
 
         self.models_item = self._add_navigation_item(
             "Models", self.models_page
         )
-        self.tag_library_item = self._add_navigation_item(
-            "Tag Library", self.tag_library_page
+        self.autocomplete_item = self._add_navigation_item(
+            "Autocomplete", self.autocomplete_page
         )
         self.network_item = QTreeWidgetItem(["Network"])
         self.network_item.setFlags(
@@ -339,21 +339,21 @@ class SettingsDialog(QDialog):
         page.close_button.hide()
         return page
 
-    def _create_tag_library_page(self) -> QWidget:
+    def _create_autocomplete_page(self) -> QWidget:
         page = QWidget()
-        self.library_group = QGroupBox("Library")
+        self.library_group = QGroupBox("Tag Library")
         self.library_info_label = QLabel()
         self.library_info_label.setWordWrap(True)
         self.library_info_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        self.delete_library_button = QPushButton("Delete Tag Library")
+        self.delete_library_button = QPushButton("Delete")
         self.delete_library_button.setStyleSheet(
             "QPushButton { color: #b42318; } "
             "QPushButton:disabled { color: #d0d5dd; }"
         )
         self.delete_library_button.clicked.connect(self._delete_tag_library)
-        self.manage_tag_library_button = QPushButton("Manage Tag Library...")
+        self.manage_tag_library_button = QPushButton("Download...")
         self.manage_tag_library_button.clicked.connect(
             self._open_tag_library_dialog
         )
