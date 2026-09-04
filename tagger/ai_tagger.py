@@ -76,18 +76,35 @@ def _model_is_cached(repo_id: str) -> bool:
     )
 
 
+def _configure_huggingface_proxy(proxy: str | None) -> None:
+    import httpx
+    from huggingface_hub import set_client_factory
+
+    proxy_url = (proxy.strip() or None) if proxy is not None else None
+    set_client_factory(
+        lambda: httpx.Client(
+            proxy=proxy_url,
+            follow_redirects=True,
+            timeout=None,
+            trust_env=proxy is None,
+        )
+    )
+
+
 class _ModelDownloadWorker(QObject):
     completed = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, repo_id: str) -> None:
+    def __init__(self, repo_id: str, proxy: str | None) -> None:
         super().__init__()
         self.repo_id = repo_id
+        self.proxy = proxy
 
     def run(self) -> None:
         try:
             from huggingface_hub import snapshot_download
 
+            _configure_huggingface_proxy(self.proxy)
             snapshot_download(repo_id=self.repo_id)
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -96,8 +113,9 @@ class _ModelDownloadWorker(QObject):
 
 
 class ModelManagementDialog(QDialog):
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, proxy: str | None = None) -> None:
         super().__init__(parent)
+        self.proxy = proxy.strip() if proxy is not None else None
         self._thread: QThread | None = None
         self._worker: _ModelDownloadWorker | None = None
         self.setWindowTitle("AI Tagging Models")
@@ -156,7 +174,7 @@ class ModelManagementDialog(QDialog):
         self.status_label.setText(f"Downloading {repo_id}...")
         self.close_button.setEnabled(False)
         thread = QThread(self)
-        worker = _ModelDownloadWorker(repo_id)
+        worker = _ModelDownloadWorker(repo_id, self.proxy)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.completed.connect(self._download_completed)
@@ -169,6 +187,9 @@ class ModelManagementDialog(QDialog):
         self._worker = worker
         self._update_buttons()
         thread.start()
+
+    def set_proxy(self, proxy: str | None) -> None:
+        self.proxy = proxy.strip() if proxy is not None else None
 
     def _download_completed(self, repo_id: str) -> None:
         self.status_label.setText(f"Downloaded {repo_id}.")
@@ -201,12 +222,14 @@ class _InferenceWorker(QObject):
         repo_id: str,
         general_threshold: float,
         character_threshold: float,
+        proxy: str | None,
     ) -> None:
         super().__init__()
         self.image_paths = image_paths
         self.repo_id = repo_id
         self.general_threshold = general_threshold
         self.character_threshold = character_threshold
+        self.proxy = proxy
 
     def run(self) -> None:
         try:
@@ -224,6 +247,7 @@ class _InferenceWorker(QObject):
         from timm.data.config import resolve_data_config
         from timm.data.transforms_factory import create_transform
 
+        _configure_huggingface_proxy(self.proxy)
         self.progress.emit(0, len(self.image_paths), "Loading model...")
         model = timm.create_model(f"hf-hub:{self.repo_id}").eval()
         state_dict = timm.models.load_state_dict_from_hf(self.repo_id)
@@ -290,10 +314,12 @@ class AITaggingDialog(QDialog):
         parent=None,
         *,
         root_directory: Path | None = None,
+        proxy: str | None = None,
     ) -> None:
         super().__init__(parent)
         self._entries = [entry for entry in entries if entry.editable]
         self._root_directory = root_directory or self._common_root_directory()
+        self._proxy = proxy.strip() if proxy is not None else None
         self._updating_checks = False
         self._selected_entries: list[ImageEntry] = []
         self._results: dict[str, list[tuple[str, float]]] = {}
@@ -589,6 +615,7 @@ class AITaggingDialog(QDialog):
             str(self.model_input.currentData()),
             self.general_threshold_input.value(),
             self.character_threshold_input.value(),
+            self._proxy,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)

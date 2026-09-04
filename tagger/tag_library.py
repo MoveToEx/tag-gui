@@ -471,14 +471,19 @@ def download_danbooru_tags(
     destination: Path = DEFAULT_TAG_LIBRARY_PATH,
     *,
     minimum_posts: int = 20,
-    proxy: str = "",
+    proxy: str | None = "",
     progress: Callable[[int, str], None] | None = None,
     source_url: str | None = None,
 ) -> int:
-    proxy_url = proxy.strip()
-    opener = build_opener(
-        ProxyHandler({"http": proxy_url, "https": proxy_url} if proxy_url else {})
+    proxy_url = proxy.strip() if proxy is not None else None
+    proxy_handler = (
+        ProxyHandler()
+        if proxy_url is None
+        else ProxyHandler(
+            {"http": proxy_url, "https": proxy_url} if proxy_url else {}
+        )
     )
+    opener = build_opener(proxy_handler)
     url = source_url or DATASET_TAGS_URL
     request = Request(url, headers={"User-Agent": "tag-gui/0.1"})
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -580,7 +585,9 @@ class _DownloadWorker(QObject):
     completed = Signal(int, str)
     failed = Signal(str)
 
-    def __init__(self, minimum_posts: int, proxy: str, destination: Path) -> None:
+    def __init__(
+        self, minimum_posts: int, proxy: str | None, destination: Path
+    ) -> None:
         super().__init__()
         self.minimum_posts = minimum_posts
         self.proxy = proxy
@@ -609,9 +616,12 @@ class DownloadTagsDialog(QDialog):
         self,
         parent=None,
         destination: Path = DEFAULT_TAG_LIBRARY_PATH,
+        *,
+        proxy: str | None = "",
     ) -> None:
         super().__init__(parent)
         self.destination = destination
+        self.proxy = proxy.strip() if proxy is not None else None
         self._thread: QThread | None = None
         self._worker: _DownloadWorker | None = None
         self.setWindowTitle("Manage Tag Library")
@@ -621,8 +631,6 @@ class DownloadTagsDialog(QDialog):
         self.minimum_posts_input.setRange(0, 2_000_000_000)
         self.minimum_posts_input.setValue(20)
         self.minimum_posts_input.setSuffix(" posts")
-        self.proxy_input = QLineEdit()
-        self.proxy_input.setPlaceholderText("http://127.0.0.1:7890")
         self.destination_label = QLabel(str(destination))
         self.destination_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
@@ -630,7 +638,6 @@ class DownloadTagsDialog(QDialog):
 
         form = QFormLayout()
         form.addRow("Minimum post count", self.minimum_posts_input)
-        form.addRow("HTTP proxy", self.proxy_input)
         form.addRow("Save to", self.destination_label)
 
         self.existing_library_label = QLabel()
@@ -673,12 +680,11 @@ class DownloadTagsDialog(QDialog):
         self.delete_button.setEnabled(False)
         self.close_button.setEnabled(False)
         self.minimum_posts_input.setEnabled(False)
-        self.proxy_input.setEnabled(False)
         self.progress_bar.setValue(0)
         thread = QThread(self)
         worker = _DownloadWorker(
             self.minimum_posts_input.value(),
-            self.proxy_input.text(),
+            self.proxy,
             self.destination,
         )
         worker.moveToThread(thread)
@@ -714,8 +720,10 @@ class DownloadTagsDialog(QDialog):
         self.close_button.setEnabled(True)
         self.download_button.setEnabled(True)
         self.minimum_posts_input.setEnabled(True)
-        self.proxy_input.setEnabled(True)
         self._refresh_existing_library()
+
+    def set_proxy(self, proxy: str | None) -> None:
+        self.proxy = proxy.strip() if proxy is not None else None
 
     def _refresh_existing_library(self) -> None:
         try:

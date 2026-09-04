@@ -13,7 +13,7 @@ from PySide6.QtCore import (
     QUrl,
 )
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QGuiApplication, QImage
-from PySide6.QtWidgets import QGroupBox, QMessageBox
+from PySide6.QtWidgets import QGroupBox, QMessageBox, QTreeWidget
 
 import tagger.main_window as main_window_module
 import tagger.archive as archive_module
@@ -25,6 +25,15 @@ from tagger.main_window import MainWindow
 from tagger.global_search import GlobalTagSearchDialog
 from tagger.preview import PreviewLoader
 from tagger.review import ReviewDialog
+from tagger.settings import (
+    JsonSettings,
+    PARENTHESES_SETTING,
+    PROXY_MODE_SETTING,
+    PROXY_SETTING,
+    SettingsDialog,
+    UNDERSCORES_SETTING,
+)
+from tagger.tag_library import TagLibrary
 from tagger.traversal import TraversalDialog
 
 
@@ -32,6 +41,182 @@ def create_png(path: Path, color: str = "#2f6fed") -> None:
     image = QImage(32, 24, QImage.Format.Format_RGB32)
     image.fill(QColor(color))
     assert image.save(str(path))
+
+
+def test_settings_changes_only_take_effect_when_applied(
+    qtbot, tmp_path: Path
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings = JsonSettings(settings_path)
+    settings.setValue(UNDERSCORES_SETTING, False)
+    settings.setValue(PARENTHESES_SETTING, False)
+    settings.sync()
+    library_path = tmp_path / "tags.csv"
+    library_path.write_text(
+        "name,post_count\nred_hair_(long),100\n", encoding="utf-8"
+    )
+    tag_library = TagLibrary(library_path)
+    dialog = SettingsDialog(settings=settings, tag_library=tag_library)
+    qtbot.addWidget(dialog)
+
+    assert not dialog.apply_button.isEnabled()
+    assert tag_library.suggestions("red") == ["red_hair_(long)"]
+
+    dialog.underscores_checkbox.setChecked(True)
+    assert dialog.apply_button.isEnabled()
+    dialog.underscores_checkbox.setChecked(False)
+    assert not dialog.apply_button.isEnabled()
+
+    dialog.underscores_checkbox.setChecked(True)
+    dialog.parentheses_checkbox.setChecked(True)
+
+    assert settings.value(UNDERSCORES_SETTING, type=bool) is False
+    assert settings.value(PARENTHESES_SETTING, type=bool) is False
+    persisted = JsonSettings(settings_path)
+    assert persisted.value(UNDERSCORES_SETTING, type=bool) is False
+    assert persisted.value(PARENTHESES_SETTING, type=bool) is False
+    assert tag_library.suggestions("red") == ["red_hair_(long)"]
+
+    dialog.apply_button.click()
+
+    assert not dialog.apply_button.isEnabled()
+    assert settings.value(UNDERSCORES_SETTING, type=bool) is True
+    assert settings.value(PARENTHESES_SETTING, type=bool) is True
+    persisted = JsonSettings(settings_path)
+    assert persisted.value(UNDERSCORES_SETTING, type=bool) is True
+    assert persisted.value(PARENTHESES_SETTING, type=bool) is True
+    assert tag_library.suggestions("red") == [r"red hair \(long\)"]
+
+
+def test_settings_ok_applies_and_cancel_discards(qtbot, tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings = JsonSettings(settings_path)
+    dialog = SettingsDialog(settings=settings)
+    qtbot.addWidget(dialog)
+
+    assert dialog.ok_button.text() == "OK"
+    assert dialog.cancel_button.text() == "Cancel"
+    dialog.underscores_checkbox.setChecked(True)
+    dialog.ok_button.click()
+
+    assert dialog.result() == SettingsDialog.DialogCode.Accepted
+    assert settings.value(UNDERSCORES_SETTING, type=bool) is True
+    persisted = JsonSettings(settings_path)
+    assert persisted.value(UNDERSCORES_SETTING, type=bool) is True
+
+    cancel_dialog = SettingsDialog(settings=settings)
+    qtbot.addWidget(cancel_dialog)
+    cancel_dialog.underscores_checkbox.setChecked(False)
+    cancel_dialog.cancel_button.click()
+
+    assert cancel_dialog.result() == SettingsDialog.DialogCode.Rejected
+    assert settings.value(UNDERSCORES_SETTING, type=bool) is True
+    persisted = JsonSettings(settings_path)
+    assert persisted.value(UNDERSCORES_SETTING, type=bool) is True
+
+
+def test_settings_tree_stages_proxy_until_applied(qtbot, tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings = JsonSettings(settings_path)
+    settings.setValue(PROXY_MODE_SETTING, "custom")
+    settings.setValue(PROXY_SETTING, "http://old-proxy:8080")
+    settings.sync()
+    dialog = SettingsDialog(settings=settings)
+    qtbot.addWidget(dialog)
+
+    assert isinstance(dialog.navigation_tree, QTreeWidget)
+    top_level_items = [
+        dialog.navigation_tree.topLevelItem(index)
+        for index in range(dialog.navigation_tree.topLevelItemCount())
+    ]
+    assert [
+        item.text(0) for item in top_level_items if item is not None
+    ] == ["Models", "Tag Library", "Network"]
+    assert dialog.network_item.childCount() == 1
+    assert dialog.network_item.child(0).text(0) == "Proxy"
+    assert dialog.network_item.isExpanded()
+    assert not hasattr(dialog.tag_library_page, "proxy_input")
+
+    dialog.navigation_tree.setCurrentItem(dialog.proxy_item)
+    assert dialog.pages.currentWidget() is dialog.proxy_page
+    assert dialog.proxy_server_group.title() == "Proxy server"
+    assert dialog.custom_proxy_radio.isChecked()
+    assert dialog.proxy_input.isEnabled()
+    assert dialog.proxy_input.text() == "http://old-proxy:8080"
+
+    dialog.proxy_input.setText("  http://new-proxy:3128  ")
+
+    assert dialog.apply_button.isEnabled()
+    assert settings.value(PROXY_SETTING, type=str) == "http://old-proxy:8080"
+    assert dialog.tag_library_page.proxy == "http://old-proxy:8080"
+    persisted = JsonSettings(settings_path)
+    assert persisted.value(PROXY_SETTING, type=str) == "http://old-proxy:8080"
+
+    dialog.apply_button.click()
+
+    assert not dialog.apply_button.isEnabled()
+    assert settings.value(PROXY_MODE_SETTING, type=str) == "custom"
+    assert settings.value(PROXY_SETTING, type=str) == "http://new-proxy:3128"
+    assert dialog.tag_library_page.proxy == "http://new-proxy:3128"
+    persisted = JsonSettings(settings_path)
+    assert persisted.value(PROXY_SETTING, type=str) == "http://new-proxy:3128"
+
+
+def test_proxy_url_without_mode_defaults_to_no_proxy(
+    qtbot, tmp_path: Path
+) -> None:
+    settings = JsonSettings(tmp_path / "settings.json")
+    settings.setValue(PROXY_SETTING, "http://old-proxy:8080")
+    dialog = SettingsDialog(settings=settings)
+    qtbot.addWidget(dialog)
+
+    assert dialog.no_proxy_radio.isChecked()
+    assert not dialog.proxy_input.isEnabled()
+    assert dialog.tag_library_page.proxy == ""
+
+
+def test_proxy_page_supports_none_system_and_custom_modes(
+    qtbot, tmp_path: Path
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings = JsonSettings(settings_path)
+    dialog = SettingsDialog(settings=settings)
+    qtbot.addWidget(dialog)
+
+    assert dialog.no_proxy_radio.text() == "No proxy"
+    assert dialog.system_proxy_radio.text() == "Use system proxy"
+    assert dialog.custom_proxy_radio.text() == "Custom proxy"
+    assert dialog.no_proxy_radio.isChecked()
+    assert not dialog.proxy_input.isEnabled()
+    assert dialog.tag_library_page.proxy == ""
+
+    dialog.system_proxy_radio.click()
+
+    assert dialog.system_proxy_radio.isChecked()
+    assert not dialog.proxy_input.isEnabled()
+    assert dialog.tag_library_page.proxy == ""
+    dialog.apply_button.click()
+    assert settings.value(PROXY_MODE_SETTING, type=str) == "system"
+    assert dialog.tag_library_page.proxy is None
+
+    dialog.custom_proxy_radio.click()
+    dialog.proxy_input.setText("http://localhost:7890")
+
+    assert dialog.custom_proxy_radio.isChecked()
+    assert dialog.proxy_input.isEnabled()
+    assert dialog.tag_library_page.proxy is None
+    dialog.apply_button.click()
+    assert settings.value(PROXY_MODE_SETTING, type=str) == "custom"
+    assert dialog.tag_library_page.proxy == "http://localhost:7890"
+
+    dialog.no_proxy_radio.click()
+
+    assert dialog.no_proxy_radio.isChecked()
+    assert not dialog.proxy_input.isEnabled()
+    assert dialog.tag_library_page.proxy == "http://localhost:7890"
+    dialog.apply_button.click()
+    assert settings.value(PROXY_MODE_SETTING, type=str) == "none"
+    assert dialog.tag_library_page.proxy == ""
 
 
 def test_main_window_loads_folder_and_edits_current_tags(qtbot, tmp_path: Path) -> None:

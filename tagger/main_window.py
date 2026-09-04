@@ -64,7 +64,7 @@ from .domain import (
 from .global_search import GlobalTagSearchDialog
 from .preview import ImageView, PreviewLoader
 from .review import ReviewDialog
-from .settings import SettingsDialog, create_app_settings
+from .settings import SettingsDialog, create_app_settings, get_download_proxy
 from .storage import (
     BatchPreflightError,
     ExternalChangeError,
@@ -758,6 +758,7 @@ class MainWindow(QMainWindow):
             editable_entries,
             self,
             root_directory=self.directory,
+            proxy=get_download_proxy(self.settings),
         )
         if dialog.exec() == AITaggingDialog.DialogCode.Accepted:
             self._load_directory(
