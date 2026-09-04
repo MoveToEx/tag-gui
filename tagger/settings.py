@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QRadioButton,
     QStackedWidget,
@@ -33,7 +34,12 @@ from .ai_tagger import (
     missing_ai_dependencies,
 )
 from .paths import SETTINGS_PATH, ensure_data_directory
-from .tag_library import DownloadTagsDialog, TagLibrary
+from .tag_library import (
+    DEFAULT_TAG_LIBRARY_PATH,
+    DownloadTagsDialog,
+    TagLibrary,
+    get_tag_library_file_info,
+)
 
 
 UNDERSCORES_SETTING = "tag_library/transform_underscores_to_spaces"
@@ -54,6 +60,17 @@ def _stabilize_checkbox(checkbox: QCheckBox) -> None:
         QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
     )
     checkbox.setFixedHeight(checkbox.sizeHint().height())
+
+
+def _format_byte_size(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            if unit == "B":
+                return f"{value:.0f} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{size} B"
 
 
 class JsonSettings:
@@ -187,6 +204,11 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.settings = settings or create_app_settings()
         self.tag_library = tag_library
+        self.tag_library_path = (
+            tag_library.csv_path
+            if tag_library is not None
+            else DEFAULT_TAG_LIBRARY_PATH
+        )
         self._applied_transform_options = (
             cast(
                 bool,
@@ -319,6 +341,31 @@ class SettingsDialog(QDialog):
 
     def _create_tag_library_page(self) -> QWidget:
         page = QWidget()
+        self.library_group = QGroupBox("Library")
+        self.library_info_label = QLabel()
+        self.library_info_label.setWordWrap(True)
+        self.library_info_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.delete_library_button = QPushButton("Delete Tag Library")
+        self.delete_library_button.setStyleSheet(
+            "QPushButton { color: #b42318; } "
+            "QPushButton:disabled { color: #d0d5dd; }"
+        )
+        self.delete_library_button.clicked.connect(self._delete_tag_library)
+        self.manage_tag_library_button = QPushButton("Manage Tag Library...")
+        self.manage_tag_library_button.clicked.connect(
+            self._open_tag_library_dialog
+        )
+
+        library_buttons = QHBoxLayout()
+        library_buttons.addWidget(self.delete_library_button)
+        library_buttons.addStretch(1)
+        library_buttons.addWidget(self.manage_tag_library_button)
+        library_layout = QVBoxLayout(self.library_group)
+        library_layout.addWidget(self.library_info_label)
+        library_layout.addLayout(library_buttons)
+
         self.underscores_checkbox = QCheckBox(
             "Transform underscores into spaces"
         )
@@ -342,19 +389,57 @@ class SettingsDialog(QDialog):
         transformation_layout.addWidget(self.underscores_checkbox)
         transformation_layout.addWidget(self.parentheses_checkbox)
 
-        self.manage_tag_library_button = QPushButton("Manage Tag Library...")
-        self.manage_tag_library_button.clicked.connect(
-            self._open_tag_library_dialog
-        )
-
         page_layout = QVBoxLayout(page)
+        page_layout.addWidget(self.library_group)
         page_layout.addWidget(self.transformation_group)
         page_layout.addStretch(1)
-        page_layout.addWidget(
-            self.manage_tag_library_button,
-            alignment=Qt.AlignmentFlag.AlignRight,
-        )
+        self._refresh_library_info()
         return page
+
+    def _refresh_library_info(self) -> None:
+        try:
+            info = get_tag_library_file_info(self.tag_library_path)
+        except FileNotFoundError:
+            self.library_info_label.setText(
+                "No local Danbooru tag library is installed.\n"
+                f"{self.tag_library_path}"
+            )
+            exists = False
+        except (OSError, ValueError) as exc:
+            self.library_info_label.setText(
+                "The local Danbooru tag library could not be read.\n"
+                f"{self.tag_library_path}\n{exc}"
+            )
+            exists = True
+        else:
+            modified = info.modified_at.strftime("%Y-%m-%d %H:%M")
+            self.library_info_label.setText(
+                f"{info.tag_count:,} tags, "
+                f"{_format_byte_size(info.file_size)}, updated {modified}.\n"
+                f"{self.tag_library_path}"
+            )
+            exists = True
+        self.delete_library_button.setEnabled(exists)
+
+    def _delete_tag_library(self) -> None:
+        if not self.tag_library_path.exists():
+            self._refresh_library_info()
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete Tag Library?",
+            f"Delete the local tag library?\n\n{self.tag_library_path}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.tag_library_path.unlink()
+        except OSError as exc:
+            QMessageBox.critical(self, "Could Not Delete Tag Library", str(exc))
+            return
+        self._library_changed(str(self.tag_library_path))
 
     def _open_tag_library_dialog(self) -> None:
         if self.tag_library_dialog is not None:
@@ -365,14 +450,11 @@ class SettingsDialog(QDialog):
         proxy = _resolved_proxy(
             self._applied_proxy_mode, self._applied_proxy_url
         )
-        if self.tag_library is None:
-            dialog = DownloadTagsDialog(self, proxy=proxy)
-        else:
-            dialog = DownloadTagsDialog(
-                self,
-                destination=self.tag_library.csv_path,
-                proxy=proxy,
-            )
+        dialog = DownloadTagsDialog(
+            self,
+            destination=self.tag_library_path,
+            proxy=proxy,
+        )
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.library_changed.connect(self._library_changed)
         dialog.finished.connect(self._tag_library_dialog_finished)
@@ -487,6 +569,7 @@ class SettingsDialog(QDialog):
     def _library_changed(self, _path: str) -> None:
         if self.tag_library is not None:
             self.tag_library.reload_danbooru()
+        self._refresh_library_info()
 
     def _busy(self) -> bool:
         pages = [self.models_page]

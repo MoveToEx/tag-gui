@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 import csv
+from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
@@ -49,6 +50,22 @@ DATASET_ID = "qdlabs/danbooru-tags"
 DATASET_TAGS_URL = (
     f"https://huggingface.co/datasets/{DATASET_ID}/resolve/main/tags.jsonl"
 )
+
+
+@dataclass(frozen=True)
+class TagLibraryFileInfo:
+    tag_count: int
+    file_size: int
+    modified_at: datetime
+
+
+def get_tag_library_file_info(path: Path) -> TagLibraryFileInfo:
+    stat = path.stat()
+    return TagLibraryFileInfo(
+        tag_count=_csv_tag_count(path),
+        file_size=stat.st_size,
+        modified_at=datetime.fromtimestamp(stat.st_mtime).astimezone(),
+    )
 
 
 def _search_key(tag: str) -> str:
@@ -609,7 +626,6 @@ class _DownloadWorker(QObject):
 
 class DownloadTagsDialog(QDialog):
     downloaded = Signal(str)
-    deleted = Signal(str)
     library_changed = Signal(str)
 
     def __init__(
@@ -640,44 +656,29 @@ class DownloadTagsDialog(QDialog):
         form.addRow("Minimum post count", self.minimum_posts_input)
         form.addRow("Save to", self.destination_label)
 
-        self.existing_library_label = QLabel()
-        self.existing_library_label.setWordWrap(True)
-        self.existing_library_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.status_label = QLabel("Ready to download.")
         self.status_label.setWordWrap(True)
         self.download_button = QPushButton("Download")
-        self.delete_button = QPushButton("Delete Tag Library")
-        self.delete_button.setStyleSheet(
-            "QPushButton { color: #b42318; } "
-            "QPushButton:disabled { color: #d0d5dd; }"
-        )
         self.close_button = QPushButton("Close")
         self.download_button.clicked.connect(self._start_download)
-        self.delete_button.clicked.connect(self._delete_library)
         self.close_button.clicked.connect(self.reject)
         buttons = QHBoxLayout()
-        buttons.addWidget(self.delete_button)
         buttons.addStretch(1)
         buttons.addWidget(self.close_button)
         buttons.addWidget(self.download_button)
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(self.existing_library_label)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.status_label)
         layout.addLayout(buttons)
-        self._refresh_existing_library()
 
     def _start_download(self) -> None:
         if self._thread is not None:
             return
         self.download_button.setEnabled(False)
-        self.delete_button.setEnabled(False)
         self.close_button.setEnabled(False)
         self.minimum_posts_input.setEnabled(False)
         self.progress_bar.setValue(0)
@@ -720,59 +721,9 @@ class DownloadTagsDialog(QDialog):
         self.close_button.setEnabled(True)
         self.download_button.setEnabled(True)
         self.minimum_posts_input.setEnabled(True)
-        self._refresh_existing_library()
 
     def set_proxy(self, proxy: str | None) -> None:
         self.proxy = proxy.strip() if proxy is not None else None
-
-    def _refresh_existing_library(self) -> None:
-        try:
-            stat = self.destination.stat()
-            count = _csv_tag_count(self.destination)
-        except FileNotFoundError:
-            self.existing_library_label.setText(
-                "Current library: no local tag CSV exists."
-            )
-            exists = False
-        except (OSError, ValueError) as exc:
-            self.existing_library_label.setText(
-                f"Current library: {self.destination} exists but could not be read: {exc}"
-            )
-            exists = True
-        else:
-            modified = datetime.fromtimestamp(stat.st_mtime).astimezone().strftime(
-                "%Y-%m-%d %H:%M"
-            )
-            self.existing_library_label.setText(
-                f"Current library: {count:,} tags, {_format_byte_size(stat.st_size)}, "
-                f"updated {modified}."
-            )
-            exists = True
-        self.delete_button.setEnabled(exists and self._thread is None)
-
-    def _delete_library(self) -> None:
-        if self._thread is not None or not self.destination.exists():
-            return
-        answer = QMessageBox.question(
-            self,
-            "Delete Tag Library?",
-            f"Delete the local tag library?\n\n{self.destination}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            self.destination.unlink()
-        except OSError as exc:
-            QMessageBox.critical(self, "Could Not Delete Tag Library", str(exc))
-            return
-        path = str(self.destination)
-        self.progress_bar.setValue(0)
-        self.status_label.setText(f"Deleted {path}")
-        self._refresh_existing_library()
-        self.deleted.emit(path)
-        self.library_changed.emit(path)
 
     @override
     def reject(self) -> None:
@@ -794,12 +745,3 @@ def _csv_tag_count(path: Path) -> int:
             raise ValueError("The tag CSV has no header.")
         name_field = _find_field(reader.fieldnames, ("name", "tag", "tag_name"))
         return sum(1 for row in reader if (row.get(name_field) or "").strip())
-
-
-def _format_byte_size(size: int) -> str:
-    value = float(size)
-    for unit in ("B", "KB", "MB", "GB"):
-        if value < 1024 or unit == "GB":
-            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
-        value /= 1024
-    return f"{size} B"

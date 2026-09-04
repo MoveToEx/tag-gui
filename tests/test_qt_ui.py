@@ -116,9 +116,13 @@ def test_settings_ok_applies_and_cancel_discards(qtbot, tmp_path: Path) -> None:
 
 
 def test_tag_library_settings_separate_transformations_and_downloads(
-    qtbot, tmp_path: Path
+    qtbot, tmp_path: Path, monkeypatch
 ) -> None:
     library_path = tmp_path / "tags.csv"
+    library_path.write_text(
+        "name,post_count\nred_hair,100\nblue_eyes,80\n",
+        encoding="utf-8",
+    )
     tag_library = TagLibrary(library_path)
     dialog = SettingsDialog(
         settings=JsonSettings(tmp_path / "settings.json"),
@@ -127,6 +131,11 @@ def test_tag_library_settings_separate_transformations_and_downloads(
     qtbot.addWidget(dialog)
 
     assert dialog.transformation_group.title() == "Transformation"
+    assert dialog.library_group.title() == "Library"
+    assert "2 tags" in dialog.library_info_label.text()
+    assert f"{library_path.stat().st_size} B" in dialog.library_info_label.text()
+    assert str(library_path) in dialog.library_info_label.text()
+    assert dialog.delete_library_button.isEnabled()
     assert dialog.transformation_group.isAncestorOf(
         dialog.underscores_checkbox
     )
@@ -148,7 +157,21 @@ def test_tag_library_settings_separate_transformations_and_downloads(
     assert isinstance(manager, DownloadTagsDialog)
     assert manager.isVisible()
     assert manager.destination == library_path
+    assert not hasattr(manager, "existing_library_label")
+    assert not hasattr(manager, "delete_button")
     manager.reject()
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args: QMessageBox.StandardButton.Yes,
+    )
+    dialog.delete_library_button.click()
+
+    assert not library_path.exists()
+    assert "No local Danbooru tag library" in dialog.library_info_label.text()
+    assert not dialog.delete_library_button.isEnabled()
+    assert tag_library.suggestions("red") == []
 
 
 def test_settings_tree_stages_proxy_until_applied(qtbot, tmp_path: Path) -> None:
