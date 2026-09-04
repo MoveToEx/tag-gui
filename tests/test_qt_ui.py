@@ -33,7 +33,7 @@ from tagger.settings import (
     SettingsDialog,
     UNDERSCORES_SETTING,
 )
-from tagger.tag_library import TagLibrary
+from tagger.tag_library import DownloadTagsDialog, TagLibrary
 from tagger.traversal import TraversalDialog
 
 
@@ -115,6 +115,42 @@ def test_settings_ok_applies_and_cancel_discards(qtbot, tmp_path: Path) -> None:
     assert persisted.value(UNDERSCORES_SETTING, type=bool) is True
 
 
+def test_tag_library_settings_separate_transformations_and_downloads(
+    qtbot, tmp_path: Path
+) -> None:
+    library_path = tmp_path / "tags.csv"
+    tag_library = TagLibrary(library_path)
+    dialog = SettingsDialog(
+        settings=JsonSettings(tmp_path / "settings.json"),
+        tag_library=tag_library,
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.transformation_group.title() == "Transformation"
+    assert dialog.transformation_group.isAncestorOf(
+        dialog.underscores_checkbox
+    )
+    assert dialog.transformation_group.isAncestorOf(
+        dialog.parentheses_checkbox
+    )
+    for checkbox in (
+        dialog.underscores_checkbox,
+        dialog.parentheses_checkbox,
+    ):
+        assert "width: 12px" in checkbox.styleSheet()
+        assert "height: 12px" in checkbox.styleSheet()
+    assert not isinstance(dialog.tag_library_page, DownloadTagsDialog)
+    assert dialog.tag_library_dialog is None
+
+    dialog.manage_tag_library_button.click()
+
+    manager = dialog.tag_library_dialog
+    assert isinstance(manager, DownloadTagsDialog)
+    assert manager.isVisible()
+    assert manager.destination == library_path
+    manager.reject()
+
+
 def test_settings_tree_stages_proxy_until_applied(qtbot, tmp_path: Path) -> None:
     settings_path = tmp_path / "settings.json"
     settings = JsonSettings(settings_path)
@@ -137,6 +173,12 @@ def test_settings_tree_stages_proxy_until_applied(qtbot, tmp_path: Path) -> None
     assert dialog.network_item.isExpanded()
     assert not hasattr(dialog.tag_library_page, "proxy_input")
 
+    dialog.manage_tag_library_button.click()
+    manager = dialog.tag_library_dialog
+    assert manager is not None
+    assert manager.proxy == "http://old-proxy:8080"
+    manager.reject()
+
     dialog.navigation_tree.setCurrentItem(dialog.proxy_item)
     assert dialog.pages.currentWidget() is dialog.proxy_page
     assert dialog.proxy_server_group.title() == "Proxy server"
@@ -148,7 +190,6 @@ def test_settings_tree_stages_proxy_until_applied(qtbot, tmp_path: Path) -> None
 
     assert dialog.apply_button.isEnabled()
     assert settings.value(PROXY_SETTING, type=str) == "http://old-proxy:8080"
-    assert dialog.tag_library_page.proxy == "http://old-proxy:8080"
     persisted = JsonSettings(settings_path)
     assert persisted.value(PROXY_SETTING, type=str) == "http://old-proxy:8080"
 
@@ -157,9 +198,14 @@ def test_settings_tree_stages_proxy_until_applied(qtbot, tmp_path: Path) -> None
     assert not dialog.apply_button.isEnabled()
     assert settings.value(PROXY_MODE_SETTING, type=str) == "custom"
     assert settings.value(PROXY_SETTING, type=str) == "http://new-proxy:3128"
-    assert dialog.tag_library_page.proxy == "http://new-proxy:3128"
     persisted = JsonSettings(settings_path)
     assert persisted.value(PROXY_SETTING, type=str) == "http://new-proxy:3128"
+
+    dialog.manage_tag_library_button.click()
+    manager = dialog.tag_library_dialog
+    assert manager is not None
+    assert manager.proxy == "http://new-proxy:3128"
+    manager.reject()
 
 
 def test_proxy_url_without_mode_defaults_to_no_proxy(
@@ -172,7 +218,12 @@ def test_proxy_url_without_mode_defaults_to_no_proxy(
 
     assert dialog.no_proxy_radio.isChecked()
     assert not dialog.proxy_input.isEnabled()
-    assert dialog.tag_library_page.proxy == ""
+
+    dialog.manage_tag_library_button.click()
+    manager = dialog.tag_library_dialog
+    assert manager is not None
+    assert manager.proxy == ""
+    manager.reject()
 
 
 def test_proxy_page_supports_none_system_and_custom_modes(
@@ -188,35 +239,46 @@ def test_proxy_page_supports_none_system_and_custom_modes(
     assert dialog.custom_proxy_radio.text() == "Custom proxy"
     assert dialog.no_proxy_radio.isChecked()
     assert not dialog.proxy_input.isEnabled()
-    assert dialog.tag_library_page.proxy == ""
 
     dialog.system_proxy_radio.click()
 
     assert dialog.system_proxy_radio.isChecked()
     assert not dialog.proxy_input.isEnabled()
-    assert dialog.tag_library_page.proxy == ""
     dialog.apply_button.click()
     assert settings.value(PROXY_MODE_SETTING, type=str) == "system"
-    assert dialog.tag_library_page.proxy is None
+
+    dialog.manage_tag_library_button.click()
+    manager = dialog.tag_library_dialog
+    assert manager is not None
+    assert manager.proxy is None
+    manager.reject()
 
     dialog.custom_proxy_radio.click()
     dialog.proxy_input.setText("http://localhost:7890")
 
     assert dialog.custom_proxy_radio.isChecked()
     assert dialog.proxy_input.isEnabled()
-    assert dialog.tag_library_page.proxy is None
     dialog.apply_button.click()
     assert settings.value(PROXY_MODE_SETTING, type=str) == "custom"
-    assert dialog.tag_library_page.proxy == "http://localhost:7890"
+
+    dialog.manage_tag_library_button.click()
+    manager = dialog.tag_library_dialog
+    assert manager is not None
+    assert manager.proxy == "http://localhost:7890"
+    manager.reject()
 
     dialog.no_proxy_radio.click()
 
     assert dialog.no_proxy_radio.isChecked()
     assert not dialog.proxy_input.isEnabled()
-    assert dialog.tag_library_page.proxy == "http://localhost:7890"
     dialog.apply_button.click()
     assert settings.value(PROXY_MODE_SETTING, type=str) == "none"
-    assert dialog.tag_library_page.proxy == ""
+
+    dialog.manage_tag_library_button.click()
+    manager = dialog.tag_library_dialog
+    assert manager is not None
+    assert manager.proxy == ""
+    manager.reject()
 
 
 def test_main_window_loads_folder_and_edits_current_tags(qtbot, tmp_path: Path) -> None:

@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
-    QStyle,
     QStackedWidget,
     QSizePolicy,
     QTreeWidget,
@@ -48,13 +47,8 @@ PROXY_MODES = {NO_PROXY, SYSTEM_PROXY, CUSTOM_PROXY}
 
 
 def _stabilize_checkbox(checkbox: QCheckBox) -> None:
-    indicator_size = checkbox.style().pixelMetric(
-        QStyle.PixelMetric.PM_IndicatorWidth, None, checkbox
-    )
     checkbox.setStyleSheet(
-        "QCheckBox::indicator { "
-        f"width: {indicator_size}px; height: {indicator_size}px; "
-        "}"
+        "QCheckBox::indicator { width: 12px; height: 12px; }"
     )
     checkbox.setSizePolicy(
         QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
@@ -223,6 +217,7 @@ class SettingsDialog(QDialog):
         self.stacked_widget = self.pages
 
         self.models_page = self._create_models_page()
+        self.tag_library_dialog: DownloadTagsDialog | None = None
         self.tag_library_page = self._create_tag_library_page()
         self.proxy_page = self._create_proxy_page()
         self.pages.addWidget(self.models_page)
@@ -322,25 +317,8 @@ class SettingsDialog(QDialog):
         page.close_button.hide()
         return page
 
-    def _create_tag_library_page(self) -> DownloadTagsDialog:
-        if self.tag_library is None:
-            page = DownloadTagsDialog(
-                self,
-                proxy=_resolved_proxy(
-                    self._applied_proxy_mode, self._applied_proxy_url
-                ),
-            )
-        else:
-            page = DownloadTagsDialog(
-                self,
-                destination=self.tag_library.csv_path,
-                proxy=_resolved_proxy(
-                    self._applied_proxy_mode, self._applied_proxy_url
-                ),
-            )
-        page.setWindowFlags(Qt.WindowType.Widget)
-        page.close_button.hide()
-
+    def _create_tag_library_page(self) -> QWidget:
+        page = QWidget()
         self.underscores_checkbox = QCheckBox(
             "Transform underscores into spaces"
         )
@@ -359,20 +337,50 @@ class SettingsDialog(QDialog):
             self._transform_options_changed
         )
 
-        options = QWidget()
-        options_layout = QVBoxLayout(options)
-        options_layout.setContentsMargins(0, 8, 0, 0)
-        options_layout.addWidget(QLabel("Tag transformation"))
-        options_layout.addWidget(self.underscores_checkbox)
-        options_layout.addWidget(self.parentheses_checkbox)
+        self.transformation_group = QGroupBox("Transformation")
+        transformation_layout = QVBoxLayout(self.transformation_group)
+        transformation_layout.addWidget(self.underscores_checkbox)
+        transformation_layout.addWidget(self.parentheses_checkbox)
 
-        # Insert options immediately before the action buttons in the page.
-        page_layout = cast(QVBoxLayout, page.layout())
-        if page_layout is None:
-            raise RuntimeError("Tag library page has no layout")
-        page_layout.insertWidget(page_layout.count() - 1, options)
-        page.library_changed.connect(self._library_changed)
+        self.manage_tag_library_button = QPushButton("Manage Tag Library...")
+        self.manage_tag_library_button.clicked.connect(
+            self._open_tag_library_dialog
+        )
+
+        page_layout = QVBoxLayout(page)
+        page_layout.addWidget(self.transformation_group)
+        page_layout.addStretch(1)
+        page_layout.addWidget(
+            self.manage_tag_library_button,
+            alignment=Qt.AlignmentFlag.AlignRight,
+        )
         return page
+
+    def _open_tag_library_dialog(self) -> None:
+        if self.tag_library_dialog is not None:
+            self.tag_library_dialog.raise_()
+            self.tag_library_dialog.activateWindow()
+            return
+
+        proxy = _resolved_proxy(
+            self._applied_proxy_mode, self._applied_proxy_url
+        )
+        if self.tag_library is None:
+            dialog = DownloadTagsDialog(self, proxy=proxy)
+        else:
+            dialog = DownloadTagsDialog(
+                self,
+                destination=self.tag_library.csv_path,
+                proxy=proxy,
+            )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.library_changed.connect(self._library_changed)
+        dialog.finished.connect(self._tag_library_dialog_finished)
+        self.tag_library_dialog = dialog
+        dialog.open()
+
+    def _tag_library_dialog_finished(self, _result: int) -> None:
+        self.tag_library_dialog = None
 
     def _create_proxy_page(self) -> QWidget:
         page = QWidget()
@@ -461,7 +469,8 @@ class SettingsDialog(QDialog):
                 underscores_to_spaces=underscores,
                 escape_parentheses=parentheses,
             )
-        self.tag_library_page.set_proxy(proxy)
+        if self.tag_library_dialog is not None:
+            self.tag_library_dialog.set_proxy(proxy)
         if isinstance(self.models_page, ModelManagementDialog):
             self.models_page.set_proxy(proxy)
         self._applied_transform_options = (underscores, parentheses)
@@ -480,9 +489,11 @@ class SettingsDialog(QDialog):
             self.tag_library.reload_danbooru()
 
     def _busy(self) -> bool:
+        pages = [self.models_page]
+        if self.tag_library_dialog is not None:
+            pages.append(self.tag_library_dialog)
         return any(
-            getattr(page, "_thread", None) is not None
-            for page in (self.models_page, self.tag_library_page)
+            getattr(page, "_thread", None) is not None for page in pages
         )
 
     def accept(self) -> None:
