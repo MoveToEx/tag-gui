@@ -11,8 +11,18 @@ import tempfile
 from typing import override
 from urllib.request import ProxyHandler, Request, build_opener
 
-from PySide6.QtCore import QObject, QStringListModel, QThread, Signal, Qt
-from PySide6.QtGui import QCloseEvent, QTextCursor
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelectionModel,
+    QModelIndex,
+    QObject,
+    QPoint,
+    QStringListModel,
+    QThread,
+    Signal,
+    Qt,
+)
+from PySide6.QtGui import QCloseEvent, QKeyEvent, QMouseEvent, QTextCursor
 from PySide6.QtWidgets import (
     QCompleter,
     QDialog,
@@ -20,12 +30,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from .domain import ImageEntry
@@ -199,38 +211,191 @@ class TagLibrary(QObject):
         self._trigrams = trigrams
 
 
-class TagCompleter(QCompleter):
+class TagCompleter(QObject):
+    """Autocomplete for a comma-separated tag line edit.
+
+    The popup is deliberately independent of ``QCompleter``.  Qt's built-in
+    completer consumes navigation keys and applies the current row while it
+    moves, which makes it impossible to keep the pending text untouched.
+    """
+
     def __init__(self, line_edit: QLineEdit, library: TagLibrary) -> None:
-        self._model = QStringListModel(line_edit)
-        super().__init__(self._model, line_edit)
+        super().__init__(line_edit)
         self._line_edit = line_edit
         self._library = library
-        self.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
-        self.setMaxVisibleItems(12)
-        line_edit.setCompleter(self)
-        line_edit.textEdited.connect(self.refresh)
+        self._model = QStringListModel(self)
+        self._popup = _TagCompletionPopup(line_edit.window())
+        self._popup.setModel(self._model)
+        self._popup.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._popup.setSelectionMode(QListView.SelectionMode.SingleSelection)
+        self._popup.setEditTriggers(QListView.EditTrigger.NoEditTriggers)
+        self._popup.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._popup.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self._popup.installEventFilter(self)
+        self._popup.viewport().installEventFilter(self)
+        line_edit.installEventFilter(self)
+        line_edit.textChanged.connect(self.refresh)
         library.changed.connect(self.refresh)
+        self.refresh()
 
-    @override
+    def popup(self) -> QListView:
+        return self._popup
+
     def splitPath(self, path: str) -> list[str]:
         return [pending_tag(path)]
 
-    @override
     def pathFromIndex(self, index) -> str:
         return replace_pending_tag(self._line_edit.text(), str(index.data()))
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if obj is self._line_edit:
+            if event.type() == QEvent.Type.FocusIn:
+                self.refresh()
+                return False
+            if event.type() == QEvent.Type.FocusOut:
+                self._popup.hide()
+                return False
+            if event.type() != QEvent.Type.KeyPress:
+                return False
+            key_event = event if isinstance(event, QKeyEvent) else None
+            if key_event is None:
+                return False
+            key = key_event.key()
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                if self._popup.isVisible() and self._model.rowCount() > 0:
+                    self._move_popup_selection(key)
+                    return True
+                return False
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if self._popup.isVisible():
+                    index = self._popup.currentIndex()
+                    if index.isValid():
+                        self._insert_completion(index)
+                        return True
+                    self._popup.hide()
+                # Returning False preserves QLineEdit.returnPressed.
+                return False
+            return False
+
+        if obj is self._popup or obj is self._popup.viewport():
+            if event.type() == QEvent.Type.KeyPress:
+                key_event = event if isinstance(event, QKeyEvent) else None
+                if key_event is not None and key_event.key() in (
+                    Qt.Key.Key_Up,
+                    Qt.Key.Key_Down,
+                ):
+                    self._move_popup_selection(key_event.key())
+                    return True
+                if key_event is not None and key_event.key() in (
+                    Qt.Key.Key_Return,
+                    Qt.Key.Key_Enter,
+                ):
+                    index = self._popup.currentIndex()
+                    if index.isValid():
+                        self._insert_completion(index)
+                    return True
+            return False
+
+        return False
+
+    def _move_popup_selection(self, key: int) -> bool:
+        popup = self._popup
+        count = self._model.rowCount()
+        if count == 0:
+            return False
+        current_row = popup.currentIndex().row()
+        if key == Qt.Key.Key_Down:
+            row = 0 if current_row < 0 else min(current_row + 1, count - 1)
+        elif key == Qt.Key.Key_Up:
+            row = 0 if current_row < 0 else max(current_row - 1, 0)
+        else:
+            return False
+        selection_model = popup.selectionModel()
+        if selection_model is None:
+            return False
+        index = self._model.index(row, 0)
+        selection_model.setCurrentIndex(
+            index,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        popup.scrollTo(index)
+        return True
+
+    def _clear_popup_selection(self) -> None:
+        popup = self._popup
+        selection_model = popup.selectionModel()
+        if selection_model is None:
+            return
+        popup.clearSelection()
+        popup.setCurrentIndex(QModelIndex())
+
+    def _insert_completion(self, index) -> None:
+        updated = self.pathFromIndex(index)
+        self._line_edit.setText(updated)
+        self._line_edit.setCursorPosition(len(self._line_edit.text()))
+        self._popup.hide()
 
     def refresh(self, text: str | None = None) -> None:
         value = self._line_edit.text() if text is None else text
         suggestions = self._library.suggestions(value)
         self._model.setStringList(suggestions)
-        self.setCompletionPrefix("")
+        self._clear_popup_selection()
         if suggestions and self._line_edit.hasFocus():
-            self.complete()
+            self._show_popup()
         else:
-            popup = self.popup()
-            if popup is not None:
-                popup.hide()
+            self._popup.hide()
+
+    def _show_popup(self) -> None:
+        popup = self._popup
+        popup.ensurePolished()
+        row_height = popup.sizeHintForRow(0) or self._line_edit.fontMetrics().height()
+        visible_rows = min(self._model.rowCount(), 12)
+        height = row_height * visible_rows + 2
+        width = max(self._line_edit.width(), popup.sizeHintForColumn(0) + 24)
+        top_left = self._line_edit.mapToGlobal(QPoint(0, self._line_edit.height()))
+        popup.setGeometry(top_left.x(), top_left.y(), width, height)
+        popup.show()
+        popup.raise_()
+        self._line_edit.setFocus()
+
+
+class _TagCompletionPopup(QListView):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            index = self.indexAt(event.position().toPoint())
+            selection_model = self.selectionModel()
+            if index.isValid() and selection_model is not None:
+                selection_model.setCurrentIndex(
+                    index,
+                    QItemSelectionModel.SelectionFlag.ClearAndSelect,
+                )
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 def attach_tag_completer(
