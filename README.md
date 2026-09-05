@@ -35,7 +35,10 @@ After modifying, use `uv lock` to re-lock the dependencies, and use `uv sync --a
 
 ## Usage
 
-Start by opening a directory containing images of supported format (PNG/JPG/WEBP) and tags (should be named `{image_stem}.txt` or `{image_full}.txt`, ignored when conflicting). Supports drag & drop.
+Start by opening a directory containing images of supported format (PNG/JPG/WEBP) and tags (should be named `{image_stem}.txt` or `{image_full}.txt`, ignored when conflicting). Supports drag & drop. 
+
+> [!NOTE]
+> It is assumed that users are training caption-based LoRAs and will randomly shuffle tags during training. Therefore, this app does not keep the tag order and stores tags in a `set[str]`. It might not work well if you're training an order-aware model.
 
 #### Add/Delete traversal
 
@@ -57,6 +60,12 @@ The script contains a `check(fn: str, tags: set[str]) -> bool` function, which a
 _Tags_ > _Bulk Operation_ allows you to programmatically apply changes to images' tags.  
 
 The script contains a `process(fn: str, tags: set[str]) -> set[str]` function which returns the new list of tags. After running all images through the script, the results are compared against the original ones to calculate the difference, and you need to review the differences image-by-image. 
+
+#### Tag review
+
+_Tags_ > _Review Tags_ allows you to thoroughly review tags within a folder and determine whether they should be deleted one-by-one.  
+
+Decisions are stored in memory and are committed only when the revision finishes.  
 
 #### AI tagging
 
