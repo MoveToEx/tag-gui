@@ -470,6 +470,30 @@ def test_file_menu_disables_missing_recent_folder(
     )
 
 
+def test_main_window_uses_saved_tag_transformations_before_settings_open(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    settings = JsonSettings(tmp_path / "settings.json")
+    settings.setValue(UNDERSCORES_SETTING, True)
+    settings.setValue(PARENTHESES_SETTING, True)
+    settings.sync()
+    library_path = tmp_path / "tags.csv"
+    library_path.write_text(
+        "name,post_count\nred_hair_(long),100\n", encoding="utf-8"
+    )
+
+    def create_library(*, parent=None, **options):
+        return TagLibrary(library_path, parent=parent, **options)
+
+    monkeypatch.setattr(main_window_module, "create_app_settings", lambda: settings)
+    monkeypatch.setattr(main_window_module, "TagLibrary", create_library)
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.tag_library.suggestions("red") == [r"red hair \(long\)"]
+
+
 def test_navigation_actions_stop_at_boundaries(qtbot, tmp_path: Path) -> None:
     create_png(tmp_path / "a.png")
     create_png(tmp_path / "b.png")

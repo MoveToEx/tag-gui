@@ -64,7 +64,13 @@ from .domain import (
 from .global_search import GlobalTagSearchDialog
 from .preview import ImageView, PreviewLoader
 from .review import ReviewDialog
-from .settings import SettingsDialog, create_app_settings, get_download_proxy
+from .settings import (
+    PARENTHESES_SETTING,
+    UNDERSCORES_SETTING,
+    SettingsDialog,
+    create_app_settings,
+    get_download_proxy,
+)
 from .storage import (
     BatchPreflightError,
     ExternalChangeError,
@@ -102,7 +108,7 @@ class MainWindow(QMainWindow):
             underscores_to_spaces=cast(
                 bool,
                 self.settings.value(
-                    "tag_library/transform_underscores_to_spaces",
+                    UNDERSCORES_SETTING,
                     False,
                     type=bool,
                 ),
@@ -110,7 +116,7 @@ class MainWindow(QMainWindow):
             escape_parentheses=cast(
                 bool,
                 self.settings.value(
-                    "tag_library/escape_parentheses", False, type=bool
+                    PARENTHESES_SETTING, False, type=bool
                 ),
             ),
         )
