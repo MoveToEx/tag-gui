@@ -20,7 +20,7 @@ from PySide6.QtGui import (
     QImage,
     QWheelEvent,
 )
-from PySide6.QtWidgets import QGroupBox, QMessageBox, QTreeWidget
+from PySide6.QtWidgets import QGroupBox, QLineEdit, QMessageBox, QTreeWidget, QWidget
 
 import tagger.main_window as main_window_module
 import tagger.archive as archive_module
@@ -40,7 +40,11 @@ from tagger.settings import (
     SettingsDialog,
     UNDERSCORES_SETTING,
 )
-from tagger.tag_library import DownloadTagsDialog, TagLibrary
+from tagger.tag_library import (
+    DownloadTagsDialog,
+    TagLibrary,
+    attach_tag_completer,
+)
 from tagger.traversal import TraversalDialog
 
 
@@ -95,6 +99,71 @@ def test_settings_changes_only_take_effect_when_applied(
     assert tag_library.suggestions("red") == [r"red hair \(long\)"]
 
 
+def test_tag_autocomplete_double_click_inserts_tag(qtbot, tmp_path: Path) -> None:
+    library_path = tmp_path / "tags.csv"
+    library_path.write_text(
+        "name,post_count\nred_hair,100\nblue_eyes,80\n",
+        encoding="utf-8",
+    )
+    library = TagLibrary(library_path)
+    host = QWidget()
+    line_edit = QLineEdit(host)
+    line_edit.resize(240, 28)
+    host.resize(240, 28)
+    qtbot.addWidget(host)
+    completer = attach_tag_completer(line_edit, library)
+    assert completer is not None
+
+    host.show()
+    line_edit.setFocus()
+    line_edit.setText("red")
+    qtbot.waitUntil(lambda: completer.popup().isVisible())
+
+    index = completer.popup().model().index(0, 0)
+    qtbot.mouseDClick(
+        completer.popup().viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=completer.popup().visualRect(index).center(),
+    )
+
+    assert line_edit.text() == "red_hair"
+    assert not completer.popup().isVisible()
+
+
+def test_tag_autocomplete_single_click_keeps_popup_visible(
+    qtbot, tmp_path: Path
+) -> None:
+    library_path = tmp_path / "tags.csv"
+    library_path.write_text(
+        "name,post_count\nred_hair,100\nblue_eyes,80\n",
+        encoding="utf-8",
+    )
+    library = TagLibrary(library_path)
+    host = QWidget()
+    line_edit = QLineEdit(host)
+    line_edit.resize(240, 28)
+    host.resize(240, 28)
+    qtbot.addWidget(host)
+    completer = attach_tag_completer(line_edit, library)
+    assert completer is not None
+
+    host.show()
+    line_edit.setFocus()
+    line_edit.setText("red")
+    qtbot.waitUntil(lambda: completer.popup().isVisible())
+
+    index = completer.popup().model().index(0, 0)
+    qtbot.mouseClick(
+        completer.popup().viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=completer.popup().visualRect(index).center(),
+    )
+
+    assert line_edit.text() == "red"
+    assert completer.popup().isVisible()
+    assert completer.popup().currentIndex() == index
+
+
 def test_settings_ok_applies_and_cancel_discards(qtbot, tmp_path: Path) -> None:
     settings_path = tmp_path / "settings.json"
     settings = JsonSettings(settings_path)
@@ -138,7 +207,7 @@ def test_tag_library_settings_separate_transformations_and_downloads(
     qtbot.addWidget(dialog)
 
     assert dialog.transformation_group.title() == "Transformation"
-    assert dialog.library_group.title() == "Library"
+    assert dialog.library_group.title() == "Tag Library"
     assert "2 tags" in dialog.library_info_label.text()
     assert f"{library_path.stat().st_size} B" in dialog.library_info_label.text()
     assert str(library_path) in dialog.library_info_label.text()
@@ -155,7 +224,7 @@ def test_tag_library_settings_separate_transformations_and_downloads(
     ):
         assert "width: 12px" in checkbox.styleSheet()
         assert "height: 12px" in checkbox.styleSheet()
-    assert not isinstance(dialog.tag_library_page, DownloadTagsDialog)
+    assert not isinstance(dialog.autocomplete_page, DownloadTagsDialog)
     assert dialog.tag_library_dialog is None
 
     dialog.manage_tag_library_button.click()
@@ -197,11 +266,11 @@ def test_settings_tree_stages_proxy_until_applied(qtbot, tmp_path: Path) -> None
     ]
     assert [
         item.text(0) for item in top_level_items if item is not None
-    ] == ["Models", "Tag Library", "Network"]
+    ] == ["Models", "Autocomplete", "Network"]
     assert dialog.network_item.childCount() == 1
     assert dialog.network_item.child(0).text(0) == "Proxy"
     assert dialog.network_item.isExpanded()
-    assert not hasattr(dialog.tag_library_page, "proxy_input")
+    assert not hasattr(dialog.autocomplete_page, "proxy_input")
 
     dialog.manage_tag_library_button.click()
     manager = dialog.tag_library_dialog
@@ -676,6 +745,39 @@ def test_toolbar_tag_search_cycles_and_supports_wildcards(qtbot, tmp_path: Path)
     assert [item.text() for item in window.tag_list.selectedItems()] == [
         "night_scene"
     ]
+
+
+def test_toolbar_tag_search_enter_accepts_active_completion(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    create_png(tmp_path / "sample.png")
+    (tmp_path / "sample.txt").write_text("dog\n", encoding="utf-8")
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._load_directory(tmp_path, show_issues=False)
+    window.show()
+    qtbot.waitExposed(window)
+
+    window.search_input.setFocus()
+    window.search_input.setText("red")
+    completer = window.search_completer
+    assert completer is not None
+    qtbot.waitUntil(lambda: completer.popup().isVisible())
+    first_index = completer.popup().model().index(0, 0)
+    completion = str(first_index.data())
+
+    qtbot.keyClick(window.search_input, Qt.Key.Key_Down)
+    assert completer.popup().currentIndex().isValid()
+
+    searches: list[int] = []
+    monkeypatch.setattr(
+        window, "_find_tag", lambda direction=1: searches.append(direction)
+    )
+    qtbot.keyClick(window.search_input, Qt.Key.Key_Return)
+
+    assert searches == []
+    assert window.search_input.text() == completion
 
 
 def test_toolbar_tag_search_finds_remaining_matches_in_current_file(

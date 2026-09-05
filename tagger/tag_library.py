@@ -23,7 +23,13 @@ from PySide6.QtCore import (
     Signal,
     Qt,
 )
-from PySide6.QtGui import QCloseEvent, QKeyEvent, QMouseEvent, QTextCursor
+from PySide6.QtGui import (
+    QCloseEvent,
+    QCursor,
+    QKeyEvent,
+    QMouseEvent,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QCompleter,
     QDialog,
@@ -255,6 +261,7 @@ class TagCompleter(QObject):
         self._popup.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._popup.installEventFilter(self)
         self._popup.viewport().installEventFilter(self)
+        self._popup.item_double_clicked.connect(self._insert_completion)
         line_edit.installEventFilter(self)
         line_edit.textChanged.connect(self.refresh)
         library.changed.connect(self.refresh)
@@ -272,10 +279,12 @@ class TagCompleter(QObject):
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         if obj is self._line_edit:
             if event.type() == QEvent.Type.FocusIn:
-                self.refresh()
+                if not self._popup.isVisible():
+                    self.refresh()
                 return False
             if event.type() == QEvent.Type.FocusOut:
-                self._popup.hide()
+                if not self._cursor_over_popup():
+                    self._popup.hide()
                 return False
             if event.type() != QEvent.Type.KeyPress:
                 return False
@@ -300,6 +309,20 @@ class TagCompleter(QObject):
             return False
 
         if obj is self._popup or obj is self._popup.viewport():
+            if event.type() == QEvent.Type.MouseButtonPress:
+                mouse_event = event if isinstance(event, QMouseEvent) else None
+                if (
+                    mouse_event is not None
+                    and mouse_event.button() == Qt.MouseButton.LeftButton
+                ):
+                    index = self._popup.indexAt(
+                        mouse_event.position().toPoint()
+                    )
+                    if index.isValid():
+                        self._line_edit.setFocus(
+                            Qt.FocusReason.MouseFocusReason
+                        )
+                return False
             if event.type() == QEvent.Type.KeyPress:
                 key_event = event if isinstance(event, QKeyEvent) else None
                 if key_event is not None and key_event.key() in (
@@ -319,6 +342,12 @@ class TagCompleter(QObject):
             return False
 
         return False
+
+    def _cursor_over_popup(self) -> bool:
+        popup = self._popup
+        return popup.isVisible() and popup.rect().contains(
+            popup.mapFromGlobal(QCursor.pos())
+        )
 
     def _move_popup_selection(self, key: int) -> bool:
         popup = self._popup
@@ -382,6 +411,8 @@ class TagCompleter(QObject):
 
 
 class _TagCompletionPopup(QListView):
+    item_double_clicked = Signal(QModelIndex)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowFlags(
@@ -410,6 +441,15 @@ class _TagCompletionPopup(QListView):
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
+            index = self.indexAt(event.position().toPoint())
+            if index.isValid():
+                selection_model = self.selectionModel()
+                if selection_model is not None:
+                    selection_model.setCurrentIndex(
+                        index,
+                        QItemSelectionModel.SelectionFlag.ClearAndSelect,
+                    )
+                self.item_double_clicked.emit(index)
             event.accept()
             return
         super().mouseDoubleClickEvent(event)

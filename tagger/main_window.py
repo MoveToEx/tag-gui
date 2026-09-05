@@ -179,10 +179,10 @@ class MainWindow(QMainWindow):
             "Search tags in the opened folder. Use * as a wildcard. "
             "Press Enter for the next match or Shift+Enter for the previous match."
         )
+        self.search_input.installEventFilter(self)
         self.search_completer = attach_tag_completer(
             self.search_input, self.tag_library
         )
-        self.search_input.installEventFilter(self)
 
         self.add_tag_button = QPushButton("+")
         self.add_tag_button.setToolTip("Add these tags to the current image")
