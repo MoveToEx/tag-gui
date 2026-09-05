@@ -226,6 +226,9 @@ class MainWindow(QMainWindow):
         self.open_action.setShortcut(QKeySequence.StandardKey.Open)
         self.open_action.triggered.connect(self.open_folder)
 
+        self.open_recent_action = QAction("Open Recent Folder", self)
+        self.open_recent_action.triggered.connect(self.open_recent_folder)
+
         self.close_folder_action = QAction("Close Folder", self)
         self.close_folder_action.setShortcut(QKeySequence.StandardKey.Close)
         self.close_folder_action.triggered.connect(self.close_folder)
@@ -324,6 +327,7 @@ class MainWindow(QMainWindow):
     def _create_menus_and_toolbar(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
         file_menu.addAction(self.open_action)
+        file_menu.addAction(self.open_recent_action)
         file_menu.addAction(self.close_folder_action)
         file_menu.addAction(self.rescan_action)
         file_menu.addSeparator()
@@ -391,6 +395,33 @@ class MainWindow(QMainWindow):
         )
         if selected:
             self._load_directory(Path(selected), show_issues=True)
+
+    def open_recent_folder(self) -> None:
+        if self.directory is not None:
+            return
+        recent = self._recent_folder()
+        if recent is None:
+            self._update_recent_folder_action()
+            return
+        self._load_directory(recent, show_issues=True)
+        self._update_recent_folder_action()
+
+    def _recent_folder(self) -> Path | None:
+        value = self.settings.value("last_directory", "", type=str)
+        if not isinstance(value, str) or not value.strip():
+            return None
+        path = Path(value.strip()).expanduser()
+        return path if path.is_dir() else None
+
+    def _update_recent_folder_action(self) -> None:
+        recent = self._recent_folder()
+        startup = self.directory is None
+        self.open_recent_action.setEnabled(startup and recent is not None)
+        self.open_recent_action.setToolTip(
+            str(recent)
+            if recent is not None
+            else "No recently opened folder is available."
+        )
 
     def close_folder(self) -> None:
         if self.directory is None:
@@ -1233,6 +1264,7 @@ class MainWindow(QMainWindow):
             self.zoom_out_action,
         ]:
             action.setEnabled(has_current)
+        self._update_recent_folder_action()
 
     def _restore_settings(self) -> None:
         geometry = self.settings.value("main_geometry")

@@ -20,7 +20,14 @@ from PySide6.QtGui import (
     QImage,
     QWheelEvent,
 )
-from PySide6.QtWidgets import QGroupBox, QLineEdit, QMessageBox, QTreeWidget, QWidget
+from PySide6.QtWidgets import (
+    QGroupBox,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QTreeWidget,
+    QWidget,
+)
 
 import tagger.main_window as main_window_module
 import tagger.archive as archive_module
@@ -409,6 +416,57 @@ def test_main_window_loads_folder_and_edits_current_tags(qtbot, tmp_path: Path) 
     window._add_current_tags()
     assert (tmp_path / "sample.txt").read_text(encoding="utf-8") == (
         "bird, cat, dog\n"
+    )
+
+
+def test_file_menu_opens_recent_folder(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    create_png(tmp_path / "sample.png")
+    settings = JsonSettings(tmp_path / "settings.json")
+    settings.setValue("last_directory", str(tmp_path))
+    monkeypatch.setattr(
+        main_window_module, "create_app_settings", lambda: settings
+    )
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.directory is None
+    assert window.open_recent_action.text() == "Open Recent Folder"
+    assert window.open_recent_action.isEnabled()
+    assert str(tmp_path) == window.open_recent_action.toolTip()
+    file_menu = next(
+        menu
+        for menu in window.menuBar().findChildren(QMenu)
+        if menu.title() == "&File"
+    )
+    assert file_menu is not None
+    assert window.open_recent_action in file_menu.actions()
+
+    window.open_recent_action.trigger()
+
+    assert window.directory == tmp_path
+    assert not window.open_recent_action.isEnabled()
+    assert window.catalog.image_count == 1
+
+
+def test_file_menu_disables_missing_recent_folder(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    settings = JsonSettings(tmp_path / "settings.json")
+    settings.setValue("last_directory", str(tmp_path / "missing"))
+    monkeypatch.setattr(
+        main_window_module, "create_app_settings", lambda: settings
+    )
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window.directory is None
+    assert not window.open_recent_action.isEnabled()
+    assert window.open_recent_action.toolTip() == (
+        "No recently opened folder is available."
     )
 
 
